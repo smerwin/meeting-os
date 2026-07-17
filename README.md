@@ -26,10 +26,10 @@ state persisted in Durable Object SQLite.
 ## Quick start
 
 ```bash
-npm install
+pnpm install
 cp .env.example .env   # add your own Brave Search API key
-npm run types           # generates env.d.ts from wrangler.jsonc bindings
-npm run dev
+pnpm run types           # generates env.d.ts from wrangler.jsonc bindings
+pnpm run dev
 ```
 
 Open [http://localhost:5173](http://localhost:5173).
@@ -78,20 +78,20 @@ src/
 ## Deploy
 
 ```bash
-npm run deploy
+pnpm run deploy
 ```
 
 Set `BRAVE_API_KEY` as a Worker secret before deploying:
 
 ```bash
-npx wrangler secret put BRAVE_API_KEY
+pnpm exec wrangler secret put BRAVE_API_KEY
 ```
 
 ## Development
 
 ```bash
-npm run check   # format check + lint + typecheck
-npm run format  # auto-format
+pnpm run check   # format check + lint + typecheck
+pnpm run format  # auto-format
 ```
 
 ## Learn more

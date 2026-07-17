@@ -4,5 +4,5 @@
 
 ## Checklist
 
-- [ ] `npm run check` passes
+- [ ] `pnpm run check` passes
 - [ ] No secrets, `.env`, or `.dev.vars` committed

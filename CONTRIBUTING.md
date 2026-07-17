@@ -3,24 +3,24 @@
 ## Setup
 
 ```bash
-npm install
+pnpm install
 cp .env.example .env   # add your own Brave Search API key
-npm run types
-npm run dev
+pnpm run types
+pnpm run dev
 ```
 
 ## Before opening a PR
 
 ```bash
-npm run check   # oxfmt --check, oxlint, tsc
+pnpm run check   # oxfmt --check, oxlint, tsc
 ```
 
-Run `npm run format` if `check` reports formatting issues.
+Run `pnpm run format` if `check` reports formatting issues.
 
 ## Guidelines
 
 - Keep PRs focused — one change per PR is easier to review.
-- Match the existing code style (enforced by `oxfmt`/`oxlint`, run `npm run check`).
+- Match the existing code style (enforced by `oxfmt`/`oxlint`, run `pnpm run check`).
 - Don't commit `.env`, `.dev.vars`, or any real API keys/secrets.
 - Describe what changed and why in the PR description.
 

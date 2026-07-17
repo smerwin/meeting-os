@@ -39,6 +39,7 @@
     "vite": "^8.1.4",
     "wrangler": "^4.110.0"
   },
+  "packageManager": "pnpm@10.30.3",
   "allowScripts": {
     "core-js-pure@3.49.0": true,
     "esbuild@0.28.1": true,
