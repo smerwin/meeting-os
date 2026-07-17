@@ -12,6 +12,8 @@ export const EMPTY_STATE: MeetingState = {
     links: []
   },
   company: { name: "", summary: "", culture: [], links: [] },
+  context: [],
+  prep: { talkingPoints: [], questions: [] },
   transcript: [],
   notes: []
 };
@@ -25,6 +27,8 @@ export function normalizeState(partial: Partial<MeetingState>): MeetingState {
     status: partial.status ?? EMPTY_STATE.status,
     person: { ...EMPTY_STATE.person, ...partial.person },
     company: { ...EMPTY_STATE.company, ...partial.company },
+    context: partial.context ?? [],
+    prep: { ...EMPTY_STATE.prep, ...partial.prep },
     transcript: partial.transcript ?? [],
     notes: partial.notes ?? []
   };

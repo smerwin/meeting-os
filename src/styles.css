@@ -410,13 +410,76 @@ body {
 }
 
 .person-panel,
-.company-panel {
+.company-panel,
+.prep-panel {
   flex: 1;
   min-height: 0;
 }
 
-.company-panel {
+.company-panel,
+.prep-panel {
   border-top: 1px solid var(--line);
+}
+
+.prep-subhead {
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 10px;
+  margin: 10px 0 6px;
+}
+
+.prep-subhead:first-child {
+  margin-top: 0;
+}
+
+.context-item {
+  margin-bottom: 8px;
+}
+
+.context-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.context-item-label {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.context-item-preview {
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.add-context-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.add-context-form input,
+.add-context-form textarea {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 6px 8px;
+  resize: vertical;
+}
+
+.add-context-form input:focus,
+.add-context-form textarea:focus {
+  outline: none;
+  border-color: var(--accent-dim);
+}
+
+.add-context-form .btn {
+  align-self: flex-start;
 }
 
 .line {

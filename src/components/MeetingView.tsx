@@ -21,6 +21,7 @@ import { TranscriptPanel } from "./TranscriptPanel";
 import { NotesPanel } from "./NotesPanel";
 import { PersonPanel } from "./PersonPanel";
 import { CompanyPanel } from "./CompanyPanel";
+import { PrepPanel } from "./PrepPanel";
 
 export function MeetingView({ meetingId }: { meetingId: string }) {
   const [state, setState] = useState<MeetingState>(EMPTY_STATE);
@@ -181,6 +182,14 @@ export function MeetingView({ meetingId }: { meetingId: string }) {
             company={state.company}
             connected={connected}
             onRefresh={() => agent.stub.refreshCompanyEnrichment()}
+          />
+          <PrepPanel
+            context={state.context}
+            prep={state.prep}
+            connected={connected}
+            onAddContext={(input) => agent.stub.addContext(input)}
+            onRemoveContext={(id) => agent.stub.removeContext(id)}
+            onGenerate={() => agent.stub.generatePrep()}
           />
         </aside>
       </div>

@@ -39,10 +39,23 @@ export interface CompanyInfo {
   links: { label: string; url: string }[];
 }
 
+export interface ContextItem {
+  id: string;
+  label: string;
+  content: string;
+}
+
+export interface MeetingPrep {
+  talkingPoints: string[];
+  questions: string[];
+}
+
 export interface MeetingState {
   status: "setup" | "idle" | "recording" | "ended";
   person: PersonInfo;
   company: CompanyInfo;
+  context: ContextItem[];
+  prep: MeetingPrep;
   transcript: TranscriptLine[];
   notes: NoteItem[];
 }
@@ -72,6 +85,11 @@ const EMPTY_COMPANY: CompanyInfo = {
   summary: "",
   culture: [],
   links: []
+};
+
+const EMPTY_PREP: MeetingPrep = {
+  talkingPoints: [],
+  questions: []
 };
 
 interface SearchResult {
@@ -294,6 +312,75 @@ Respond with ONLY valid JSON, no markdown fences, in this exact shape:
   };
 }
 
+const MAX_CONTEXT_ITEM_CHARS = 6000;
+
+async function synthesizePrep(
+  env: Env,
+  person: PersonInfo,
+  company: CompanyInfo,
+  context: ContextItem[]
+): Promise<MeetingPrep> {
+  const personBlurb = [
+    `${person.name}${person.role ? `, ${person.role}` : ""}${person.company ? ` at ${person.company}` : ""}`,
+    person.bio,
+    ...person.facts
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const companyBlurb = [company.summary, ...company.culture]
+    .filter(Boolean)
+    .join("\n");
+
+  const contextBlurb = context
+    .map(
+      (c) => `--- ${c.label} ---\n${c.content.slice(0, MAX_CONTEXT_ITEM_CHARS)}`
+    )
+    .join("\n\n");
+
+  const prompt = `You are helping someone prepare for a meeting. Use everything below to produce specific, grounded prep — not generic advice.
+
+Person: ${personBlurb || "(no background available)"}
+
+Company: ${companyBlurb || "(no background available)"}
+
+Attached context (e.g. job description, resume, docs — whatever was provided):
+${contextBlurb || "(none provided)"}
+
+Write up to 6 "talkingPoints" — specific things to bring up, each grounded in the attached context and/or person/company background (e.g. connect a resume detail to a job requirement, reference a real fact about the person or company). Avoid generic filler like "ask about their experience."
+
+Write up to 6 "questions" — specific, non-generic questions to ask in this meeting, grounded the same way.
+
+Respond with ONLY valid JSON, no markdown fences, in this exact shape:
+{"talkingPoints": ["...", "..."], "questions": ["...", "..."]}`;
+
+  const result = await env.AI.run("@cf/meta/llama-3.1-8b-instruct-fast", {
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.3,
+    max_tokens: 900
+  });
+
+  const response = (result as AiTextResult).response;
+
+  let parsed: { talkingPoints?: string[]; questions?: string[] };
+  if (response && typeof response === "object") {
+    parsed = response as typeof parsed;
+  } else {
+    const raw = extractModelText(result);
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match)
+      throw new Error(`No JSON in model response: ${raw.slice(0, 200)}`);
+    parsed = JSON.parse(match[0]);
+  }
+
+  return {
+    talkingPoints: Array.isArray(parsed.talkingPoints)
+      ? parsed.talkingPoints
+      : [],
+    questions: Array.isArray(parsed.questions) ? parsed.questions : []
+  };
+}
+
 // Single global instance (name "global") — a directory of every MeetingAgent
 // that has ever loaded a person, so the landing page can list history.
 export class MeetingIndex extends Agent<Env> {
@@ -339,19 +426,28 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
     status: "setup",
     person: EMPTY_PERSON,
     company: EMPTY_COMPANY,
+    context: [],
+    prep: EMPTY_PREP,
     transcript: [],
     notes: []
   };
 
   async onConnect(conn: Connection) {
-    // A session created before `company` existed on MeetingState has no
-    // company object at all in its persisted state. Backfill it once so
-    // older sessions don't need a fresh "new meeting" to get company
-    // enrichment.
+    // A session created before a field existed on MeetingState has no key
+    // for it at all in its persisted state (not just an empty value) —
+    // backfill anything missing so older sessions don't need a fresh
+    // "new meeting" to pick up newer functionality.
+    const patch: Partial<MeetingState> = {};
     if (!this.state.company) {
       const companyName = this.state.person?.company ?? "";
-      const company: CompanyInfo = { ...EMPTY_COMPANY, name: companyName };
-      this.setState({ ...this.state, company });
+      patch.company = { ...EMPTY_COMPANY, name: companyName };
+    }
+    if (!this.state.context) patch.context = [];
+    if (!this.state.prep) patch.prep = EMPTY_PREP;
+
+    if (Object.keys(patch).length > 0) {
+      this.setState({ ...this.state, ...patch });
+      const companyName = patch.company?.name;
       if (companyName) void this.enrichCompany(companyName);
     }
     conn.send(JSON.stringify({ type: "state", state: this.state }));
@@ -408,6 +504,8 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
       status: "idle",
       person,
       company,
+      context: [],
+      prep: EMPTY_PREP,
       transcript: [],
       notes: []
     });
@@ -451,6 +549,47 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
     if (!name) return { ok: false };
     void this.enrichCompany(name);
     return { ok: true };
+  }
+
+  @callable()
+  async addContext(input: { label: string; content: string }) {
+    const item: ContextItem = {
+      id: crypto.randomUUID(),
+      label: input.label.trim() || "Untitled",
+      content: input.content.trim()
+    };
+    if (!item.content) return { ok: false };
+    this.setState({ ...this.state, context: [...this.state.context, item] });
+    this.broadcast(JSON.stringify({ type: "state", state: this.state }));
+    return { ok: true };
+  }
+
+  @callable()
+  async removeContext(id: string) {
+    this.setState({
+      ...this.state,
+      context: this.state.context.filter((c) => c.id !== id)
+    });
+    this.broadcast(JSON.stringify({ type: "state", state: this.state }));
+    return { ok: true };
+  }
+
+  @callable()
+  async generatePrep() {
+    try {
+      const prep = await synthesizePrep(
+        this.env,
+        this.state.person,
+        this.state.company,
+        this.state.context
+      );
+      this.setState({ ...this.state, prep });
+      this.broadcast(JSON.stringify({ type: "state", state: this.state }));
+      return { ok: true };
+    } catch (err) {
+      console.error("prep generation failed:", err);
+      return { ok: false };
+    }
   }
 
   private async enrich(forName: string) {
