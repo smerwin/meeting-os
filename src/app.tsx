@@ -337,6 +337,22 @@ export default function App() {
         <span className="sep">/</span>
         <span className="session">{state.person.name}</span>
         <div className="spacer" />
+        <div className="record-controls">
+          <button
+            className="btn btn-sm"
+            disabled={!connected || state.status === "recording"}
+            onClick={handleStart}
+          >
+            ▶ start
+          </button>
+          <button
+            className="btn btn-sm"
+            disabled={!connected || state.status !== "recording"}
+            onClick={handleStop}
+          >
+            ■ stop
+          </button>
+        </div>
         <span className={`conn ${connected ? "on" : "off"}`}>
           {connected ? "● connected" : "○ disconnected"}
         </span>
@@ -344,6 +360,10 @@ export default function App() {
           ↺ new meeting
         </button>
       </header>
+
+      {captureError && (
+        <div className="capture-error-banner">{captureError}</div>
+      )}
 
       {creatingNew && (
         <div className="overlay">
@@ -385,30 +405,10 @@ export default function App() {
                 <span className="call-placeholder">
                   {state.status === "recording"
                     ? "[ streaming mic + shared tab audio to whisper ]"
-                    : "[ click start, then share the Google Meet tab (with tab audio) ]"}
+                    : "[ click start, then share the meeting tab (with tab audio) ]"}
                 </span>
               </div>
             </div>
-          </div>
-
-          <div className="controls">
-            <button
-              className="btn"
-              disabled={!connected || state.status === "recording"}
-              onClick={handleStart}
-            >
-              ▶ start
-            </button>
-            <button
-              className="btn"
-              disabled={!connected || state.status !== "recording"}
-              onClick={handleStop}
-            >
-              ■ stop
-            </button>
-            {captureError && (
-              <span className="capture-error">{captureError}</span>
-            )}
           </div>
 
           <section className="panel notes-panel">
@@ -427,7 +427,17 @@ export default function App() {
         </main>
 
         <aside className="panel person-panel">
-          <div className="panel-head">participant</div>
+          <div className="panel-head panel-head-row">
+            <span>participant</span>
+            <button
+              className="panel-action"
+              disabled={!connected || !state.person.name}
+              onClick={() => agent.stub.refreshEnrichment()}
+              aria-label="Refresh enrichment"
+            >
+              ↻ refresh
+            </button>
+          </div>
           <div className="panel-body">
             <div className="person-name">{state.person.name || "—"}</div>
             <div className="person-role">{state.person.role}</div>

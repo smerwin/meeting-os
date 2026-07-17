@@ -73,6 +73,22 @@ async function braveSearch(env: Env, query: string): Promise<SearchResult[]> {
   }));
 }
 
+// Workers AI text-gen models don't have a consistent output shape across
+// variants: some return `response` as a plain string, the "-fast" variant
+// returns `response` already parsed into an object when it looks like JSON,
+// and some fall back to an OpenAI-style `choices[0].message.content` string.
+type AiTextResult = {
+  response?: unknown;
+  choices?: { message?: { content?: string } }[];
+};
+
+function extractModelText(result: unknown): string {
+  const r = result as AiTextResult;
+  if (typeof r.response === "string") return r.response;
+  const content = r.choices?.[0]?.message?.content;
+  return typeof content === "string" ? content : "";
+}
+
 async function synthesizePerson(
   env: Env,
   person: PersonInfo,
@@ -100,15 +116,20 @@ Respond with ONLY valid JSON, no markdown fences, in this exact shape:
     max_tokens: 400
   });
 
-  const raw = (result as { response?: string }).response ?? "";
-  const match = raw.match(/\{[\s\S]*\}/);
-  if (!match)
-    throw new Error(`No JSON in model response: ${raw.slice(0, 200)}`);
+  const response = (result as AiTextResult).response;
 
-  const parsed = JSON.parse(match[0]) as {
-    bio?: string;
-    links?: { label: string; url: string }[];
-  };
+  let parsed: { bio?: string; links?: { label: string; url: string }[] };
+  if (response && typeof response === "object") {
+    // "-fast" variant already parsed the JSON for us.
+    parsed = response as typeof parsed;
+  } else {
+    const raw = extractModelText(result);
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match)
+      throw new Error(`No JSON in model response: ${raw.slice(0, 200)}`);
+    parsed = JSON.parse(match[0]);
+  }
+
   return {
     bio: parsed.bio ?? "",
     links: Array.isArray(parsed.links) ? parsed.links : []
@@ -150,6 +171,14 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
     });
     this.broadcast(JSON.stringify({ type: "state", state: this.state }));
     void this.enrich(person.name);
+    return { ok: true };
+  }
+
+  @callable()
+  async refreshEnrichment() {
+    const name = this.state.person.name;
+    if (!name) return { ok: false };
+    void this.enrich(name);
     return { ok: true };
   }
 
@@ -258,7 +287,7 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
           max_tokens: 60
         }
       );
-      const text = (result as { response?: string }).response?.trim();
+      const text = extractModelText(result).trim();
       if (!text) return;
 
       const note: NoteItem = { id: crypto.randomUUID(), text, ts: Date.now() };
