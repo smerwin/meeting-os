@@ -177,18 +177,6 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
   }
 
   @callable()
-  async reset() {
-    this.setState({
-      status: "setup",
-      person: EMPTY_PERSON,
-      transcript: [],
-      notes: []
-    });
-    this.broadcast(JSON.stringify({ type: "state", state: this.state }));
-    return { ok: true };
-  }
-
-  @callable()
   async start() {
     this.setState({
       ...this.state,

@@ -234,12 +234,43 @@ body {
   gap: 10px;
 }
 
+.setup-form-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
 .setup-title {
   color: var(--dim);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-size: 10px;
-  margin-bottom: 4px;
+}
+
+.setup-close {
+  background: none;
+  border: none;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 13px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 2px 4px;
+}
+
+.setup-close:hover {
+  color: var(--danger);
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(101, 123, 131, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
 }
 
 .setup-form label {

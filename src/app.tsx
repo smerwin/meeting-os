@@ -31,6 +31,7 @@ function StatusDot({ status }: { status: MeetingState["status"] }) {
 
 function SetupForm({
   onLoad,
+  onClose,
   connected
 }: {
   onLoad: (input: {
@@ -39,6 +40,7 @@ function SetupForm({
     role: string;
     email: string;
   }) => void;
+  onClose?: () => void;
   connected: boolean;
 }) {
   const [name, setName] = useState("");
@@ -56,7 +58,19 @@ function SetupForm({
           onLoad({ name, company, role, email });
         }}
       >
-        <div className="setup-title">load meeting</div>
+        <div className="setup-form-head">
+          <div className="setup-title">load meeting</div>
+          {onClose && (
+            <button
+              type="button"
+              className="setup-close"
+              aria-label="Cancel"
+              onClick={onClose}
+            >
+              ✕
+            </button>
+          )}
+        </div>
         <label>
           name
           <input value={name} onChange={(e) => setName(e.target.value)} />
@@ -93,30 +107,108 @@ function SetupForm({
   );
 }
 
-const CHUNK_MS = 4000;
+const CHUNK_SECONDS = 4;
 const ROLE_INTERVIEWER = 0;
 const ROLE_CANDIDATE = 1;
 
-async function sendChunk(
-  agent: { send: (data: ArrayBuffer) => void },
+// Whisper rejects MediaRecorder's webm/opus container ("Invalid audio input").
+// Capture raw PCM via Web Audio instead and encode it as a WAV file per chunk.
+function encodeWav(samples: Float32Array, sampleRate: number): ArrayBuffer {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+
+  function writeString(offset: number, str: string) {
+    for (let i = 0; i < str.length; i++)
+      view.setUint8(offset + i, str.charCodeAt(i));
+  }
+
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeString(8, "WAVE");
+  writeString(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true); // byte rate
+  view.setUint16(32, 2, true); // block align
+  view.setUint16(34, 16, true); // bits per sample
+  writeString(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    offset += 2;
+  }
+  return buffer;
+}
+
+interface PcmCapture {
+  ctx: AudioContext;
+  stop: () => void;
+}
+
+function startPcmCapture(
+  stream: MediaStream,
   roleByte: number,
-  blob: Blob
-) {
-  if (blob.size === 0) return;
-  const buf = await blob.arrayBuffer();
-  const framed = new Uint8Array(buf.byteLength + 1);
-  framed[0] = roleByte;
-  framed.set(new Uint8Array(buf), 1);
-  agent.send(framed.buffer);
+  agent: { send: (data: ArrayBuffer) => void }
+): PcmCapture {
+  const ctx = new AudioContext();
+  const source = ctx.createMediaStreamSource(stream);
+  const processor = ctx.createScriptProcessor(4096, 1, 1);
+  const silentGain = ctx.createGain();
+  silentGain.gain.value = 0;
+
+  const targetSamples = ctx.sampleRate * CHUNK_SECONDS;
+  let buffers: Float32Array[] = [];
+  let collected = 0;
+
+  processor.onaudioprocess = (e) => {
+    buffers.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+    collected += e.inputBuffer.length;
+    if (collected < targetSamples) return;
+
+    const merged = new Float32Array(collected);
+    let pos = 0;
+    for (const buf of buffers) {
+      merged.set(buf, pos);
+      pos += buf.length;
+    }
+    buffers = [];
+    collected = 0;
+
+    const wav = encodeWav(merged, ctx.sampleRate);
+    const framed = new Uint8Array(wav.byteLength + 1);
+    framed[0] = roleByte;
+    framed.set(new Uint8Array(wav), 1);
+    agent.send(framed.buffer);
+  };
+
+  source.connect(processor);
+  processor.connect(silentGain);
+  silentGain.connect(ctx.destination);
+
+  return {
+    ctx,
+    stop: () => {
+      processor.disconnect();
+      source.disconnect();
+      silentGain.disconnect();
+      void ctx.close();
+    }
+  };
 }
 
 export default function App() {
   const [state, setState] = useState<MeetingState>(EMPTY_STATE);
   const [connected, setConnected] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
+  const [creatingNew, setCreatingNew] = useState(false);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const streamsRef = useRef<MediaStream[]>([]);
-  const recordersRef = useRef<MediaRecorder[]>([]);
+  const capturesRef = useRef<PcmCapture[]>([]);
 
   const agent = useAgent<MeetingAgent>({
     agent: "MeetingAgent",
@@ -148,10 +240,8 @@ export default function App() {
   }, [state.transcript.length]);
 
   const stopCapture = useCallback(() => {
-    for (const rec of recordersRef.current) {
-      if (rec.state !== "inactive") rec.stop();
-    }
-    recordersRef.current = [];
+    for (const capture of capturesRef.current) capture.stop();
+    capturesRef.current = [];
     for (const stream of streamsRef.current) {
       for (const track of stream.getTracks()) track.stop();
     }
@@ -170,12 +260,13 @@ export default function App() {
     });
     streamsRef.current = [mic, tab];
 
-    const micRec = new MediaRecorder(new MediaStream(mic.getAudioTracks()), {
-      mimeType: "audio/webm;codecs=opus"
-    });
-    micRec.ondataavailable = (e) => sendChunk(agent, ROLE_INTERVIEWER, e.data);
-    micRec.start(CHUNK_MS);
-    recordersRef.current.push(micRec);
+    capturesRef.current.push(
+      startPcmCapture(
+        new MediaStream(mic.getAudioTracks()),
+        ROLE_INTERVIEWER,
+        agent
+      )
+    );
 
     const tabAudioTracks = tab.getAudioTracks();
     if (tabAudioTracks.length === 0) {
@@ -183,12 +274,9 @@ export default function App() {
         'No tab audio captured — when sharing, pick the Google Meet tab and enable "Share tab audio".'
       );
     } else {
-      const tabRec = new MediaRecorder(new MediaStream(tabAudioTracks), {
-        mimeType: "audio/webm;codecs=opus"
-      });
-      tabRec.ondataavailable = (e) => sendChunk(agent, ROLE_CANDIDATE, e.data);
-      tabRec.start(CHUNK_MS);
-      recordersRef.current.push(tabRec);
+      capturesRef.current.push(
+        startPcmCapture(new MediaStream(tabAudioTracks), ROLE_CANDIDATE, agent)
+      );
     }
   }, [agent]);
 
@@ -197,11 +285,10 @@ export default function App() {
     company: string;
     role: string;
     email: string;
-  }) => agent.stub.loadPerson(input);
-
-  const handleReset = () => {
+  }) => {
     stopCapture();
-    agent.stub.reset();
+    agent.stub.loadPerson(input);
+    setCreatingNew(false);
   };
 
   const handleStart = async () => {
@@ -246,10 +333,20 @@ export default function App() {
         <span className={`conn ${connected ? "on" : "off"}`}>
           {connected ? "● connected" : "○ disconnected"}
         </span>
-        <button className="btn btn-sm" onClick={handleReset}>
+        <button className="btn btn-sm" onClick={() => setCreatingNew(true)}>
           ↺ new meeting
         </button>
       </header>
+
+      {creatingNew && (
+        <div className="overlay">
+          <SetupForm
+            onLoad={handleLoad}
+            onClose={() => setCreatingNew(false)}
+            connected={connected}
+          />
+        </div>
+      )}
 
       <div className="grid">
         <aside className="panel transcript-panel">
