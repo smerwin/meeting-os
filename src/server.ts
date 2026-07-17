@@ -1,6 +1,7 @@
 import {
   Agent,
   callable,
+  getAgentByName,
   routeAgentRequest,
   type Connection,
   type WSMessage
@@ -44,6 +45,16 @@ export interface MeetingState {
   company: CompanyInfo;
   transcript: TranscriptLine[];
   notes: NoteItem[];
+}
+
+export interface MeetingSummary {
+  id: string;
+  personName: string;
+  company: string;
+  role: string;
+  status: MeetingState["status"];
+  createdAt: number;
+  updatedAt: number;
 }
 
 const EMPTY_PERSON: PersonInfo = {
@@ -283,6 +294,46 @@ Respond with ONLY valid JSON, no markdown fences, in this exact shape:
   };
 }
 
+// Single global instance (name "global") — a directory of every MeetingAgent
+// that has ever loaded a person, so the landing page can list history.
+export class MeetingIndex extends Agent<Env> {
+  onStart() {
+    this.sql`
+      CREATE TABLE IF NOT EXISTS meetings (
+        id TEXT PRIMARY KEY,
+        personName TEXT,
+        company TEXT,
+        role TEXT,
+        status TEXT,
+        createdAt INTEGER,
+        updatedAt INTEGER
+      )
+    `;
+  }
+
+  @callable()
+  async list(): Promise<MeetingSummary[]> {
+    return this.sql<MeetingSummary>`
+      SELECT * FROM meetings ORDER BY updatedAt DESC
+    `;
+  }
+
+  @callable()
+  async upsert(entry: MeetingSummary) {
+    this.sql`
+      INSERT INTO meetings (id, personName, company, role, status, createdAt, updatedAt)
+      VALUES (${entry.id}, ${entry.personName}, ${entry.company}, ${entry.role}, ${entry.status}, ${entry.createdAt}, ${entry.updatedAt})
+      ON CONFLICT(id) DO UPDATE SET
+        personName = excluded.personName,
+        company = excluded.company,
+        role = excluded.role,
+        status = excluded.status,
+        updatedAt = excluded.updatedAt
+    `;
+    return { ok: true };
+  }
+}
+
 export class MeetingAgent extends Agent<Env, MeetingState> {
   initialState: MeetingState = {
     status: "setup",
@@ -325,6 +376,26 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
     return { person, company };
   }
 
+  // This agent's own instance id doubles as the meeting id used in the
+  // landing page's history list and the `/m/:id` URL.
+  private async syncIndex() {
+    try {
+      const index = await getAgentByName(this.env.MeetingIndex, "global");
+      const now = Date.now();
+      await index.upsert({
+        id: this.name,
+        personName: this.state.person.name,
+        company: this.state.person.company,
+        role: this.state.person.role,
+        status: this.state.status,
+        createdAt: now,
+        updatedAt: now
+      });
+    } catch (err) {
+      console.error("meeting index sync failed:", err);
+    }
+  }
+
   @callable()
   async loadPerson(input: {
     name: string;
@@ -343,6 +414,7 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
     this.broadcast(JSON.stringify({ type: "state", state: this.state }));
     void this.enrich(person.name);
     if (company.name) void this.enrichCompany(company.name);
+    void this.syncIndex();
     return { ok: true };
   }
 
@@ -361,6 +433,7 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
     this.broadcast(JSON.stringify({ type: "state", state: this.state }));
     void this.enrich(person.name);
     if (company.name) void this.enrichCompany(company.name);
+    void this.syncIndex();
     return { ok: true };
   }
 
@@ -447,6 +520,7 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
       notes: []
     });
     this.broadcast(JSON.stringify({ type: "state", state: this.state }));
+    void this.syncIndex();
     return { ok: true };
   }
 
@@ -454,6 +528,7 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
   async stop() {
     this.setState({ ...this.state, status: "ended" });
     this.broadcast(JSON.stringify({ type: "state", state: this.state }));
+    void this.syncIndex();
     return { ok: true };
   }
 

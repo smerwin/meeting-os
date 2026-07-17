@@ -1,4 +1,5 @@
 import type { MeetingState } from "../server";
+import { navigate } from "../lib/router";
 
 export interface TopBarSession {
   personName: string;
@@ -18,7 +19,9 @@ export function TopBar({
 }) {
   return (
     <header className="topbar">
-      <span className="brand">meeting-os</span>
+      <button className="brand-link" onClick={() => navigate("/")}>
+        meeting-os
+      </button>
       {session && (
         <>
           <span className="sep">/</span>

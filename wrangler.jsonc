@@ -15,6 +15,10 @@
       {
         "class_name": "MeetingAgent",
         "name": "MeetingAgent"
+      },
+      {
+        "class_name": "MeetingIndex",
+        "name": "MeetingIndex"
       }
     ]
   },
@@ -22,6 +26,10 @@
     {
       "new_sqlite_classes": ["MeetingAgent"],
       "tag": "v1"
+    },
+    {
+      "new_sqlite_classes": ["MeetingIndex"],
+      "tag": "v2"
     }
   ]
 }
