@@ -293,6 +293,16 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
   };
 
   async onConnect(conn: Connection) {
+    // A session created before `company` existed on MeetingState has no
+    // company object at all in its persisted state. Backfill it once so
+    // older sessions don't need a fresh "new meeting" to get company
+    // enrichment.
+    if (!this.state.company) {
+      const companyName = this.state.person?.company ?? "";
+      const company: CompanyInfo = { ...EMPTY_COMPANY, name: companyName };
+      this.setState({ ...this.state, company });
+      if (companyName) void this.enrichCompany(companyName);
+    }
     conn.send(JSON.stringify({ type: "state", state: this.state }));
   }
 
