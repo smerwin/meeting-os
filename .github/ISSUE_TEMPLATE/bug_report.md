@@ -17,6 +17,7 @@ What's broken.
 What you expected to happen instead.
 
 **Environment**
+
 - Browser/OS:
 - Node version:
 
