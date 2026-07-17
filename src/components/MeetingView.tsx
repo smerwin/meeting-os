@@ -28,6 +28,7 @@ export function MeetingView({ meetingId }: { meetingId: string }) {
   const [connected, setConnected] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  const [videoStream, setVideoStream] = useState<MediaStream | null>(null);
   const streamsRef = useRef<MediaStream[]>([]);
   const capturesRef = useRef<PcmCapture[]>([]);
 
@@ -61,6 +62,7 @@ export function MeetingView({ meetingId }: { meetingId: string }) {
       for (const track of stream.getTracks()) track.stop();
     }
     streamsRef.current = [];
+    setVideoStream(null);
   }, []);
 
   const startCapture = useCallback(async () => {
@@ -72,6 +74,17 @@ export function MeetingView({ meetingId }: { meetingId: string }) {
       audio: true
     });
     streamsRef.current = [mic, tab];
+
+    const tabVideoTrack = tab.getVideoTracks()[0];
+    if (tabVideoTrack) {
+      setVideoStream(tab);
+      // Browser's native "Stop sharing" control ends the track without
+      // going through our Stop button — clean up the same way it would.
+      tabVideoTrack.addEventListener("ended", () => {
+        stopCapture();
+        agent.stub.stop();
+      });
+    }
 
     capturesRef.current.push(
       startPcmCapture(new MediaStream(mic.getAudioTracks()), ROLE_ME, agent)
@@ -87,7 +100,7 @@ export function MeetingView({ meetingId }: { meetingId: string }) {
         startPcmCapture(new MediaStream(tabAudioTracks), ROLE_THEM, agent)
       );
     }
-  }, [agent]);
+  }, [agent, stopCapture]);
 
   const handleLoad = (input: SetupFormInput) => {
     stopCapture();
@@ -168,7 +181,7 @@ export function MeetingView({ meetingId }: { meetingId: string }) {
         />
 
         <main className="center">
-          <CallFrame status={state.status} />
+          <CallFrame status={state.status} videoStream={videoStream} />
           <NotesPanel notes={state.notes} />
         </main>
 
