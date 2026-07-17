@@ -71,7 +71,6 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
   };
 
   async onConnect(conn: Connection) {
-    conn.accept();
     conn.send(JSON.stringify({ type: "state", state: this.state }));
   }
 
