@@ -94,7 +94,7 @@ Write a short professional background summary (2-4 sentences, factual, no specul
 Respond with ONLY valid JSON, no markdown fences, in this exact shape:
 {"bio": "...", "links": [{"label": "...", "url": "..."}]}`;
 
-  const result = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
+  const result = await env.AI.run("@cf/meta/llama-3.1-8b-instruct-fast", {
     messages: [{ role: "user", content: prompt }],
     temperature: 0.2,
     max_tokens: 400
@@ -245,16 +245,19 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
       .join("\n");
 
     try {
-      const result = await this.env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
-        messages: [
-          {
-            role: "user",
-            content: `You're assisting someone live during a call. Based on this recent exchange, write ONE short note (max 20 words) capturing a key signal, a follow-up question, or a red/green flag. Respond with just the note text, nothing else.\n\n${recent}`
-          }
-        ],
-        temperature: 0.4,
-        max_tokens: 60
-      });
+      const result = await this.env.AI.run(
+        "@cf/meta/llama-3.1-8b-instruct-fast",
+        {
+          messages: [
+            {
+              role: "user",
+              content: `You're assisting someone live during a call. Based on this recent exchange, write ONE short note (max 20 words) capturing a key signal, a follow-up question, or a red/green flag. Respond with just the note text, nothing else.\n\n${recent}`
+            }
+          ],
+          temperature: 0.4,
+          max_tokens: 60
+        }
+      );
       const text = (result as { response?: string }).response?.trim();
       if (!text) return;
 
