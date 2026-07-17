@@ -6,7 +6,7 @@ import {
   type WSMessage
 } from "agents";
 
-export type Role = "candidate" | "interviewer";
+export type Role = "me" | "them";
 
 export interface TranscriptLine {
   id: string;
@@ -82,9 +82,9 @@ async function synthesizePerson(
     .map((r, i) => `[${i + 1}] ${r.title}\n${r.url}\n${r.description}`)
     .join("\n\n");
 
-  const prompt = `You are prepping an interviewer with background on a candidate before a meeting.
+  const prompt = `You are prepping someone with background on a person before a meeting.
 
-Candidate: ${person.name}${person.role ? `, ${person.role}` : ""}${person.company ? ` at ${person.company}` : ""}
+Person: ${person.name}${person.role ? `, ${person.role}` : ""}${person.company ? ` at ${person.company}` : ""}
 
 Search results:
 ${context}
@@ -195,8 +195,8 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
     return { ok: true };
   }
 
-  // Client frames audio chunks as: [roleByte, ...audioBytes]. roleByte 0 = interviewer
-  // (local mic), 1 = candidate (shared tab audio from the call).
+  // Client frames audio chunks as: [roleByte, ...audioBytes]. roleByte 0 = me
+  // (local mic), 1 = them (shared tab audio from the call).
   async onMessage(conn: Connection, message: WSMessage) {
     if (typeof message === "string" || !(message instanceof ArrayBuffer))
       return;
@@ -204,7 +204,7 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
     if (message.byteLength < 2) return;
 
     const bytes = new Uint8Array(message);
-    const role: Role = bytes[0] === 1 ? "candidate" : "interviewer";
+    const role: Role = bytes[0] === 1 ? "them" : "me";
     const audio = bytes.subarray(1);
     await this.transcribeChunk(role, audio);
   }
@@ -249,7 +249,7 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
         messages: [
           {
             role: "user",
-            content: `You're assisting an interviewer live during a call. Based on this recent exchange, write ONE short note (max 20 words) capturing a key signal, a follow-up question, or a red/green flag. Respond with just the note text, nothing else.\n\n${recent}`
+            content: `You're assisting someone live during a call. Based on this recent exchange, write ONE short note (max 20 words) capturing a key signal, a follow-up question, or a red/green flag. Respond with just the note text, nothing else.\n\n${recent}`
           }
         ],
         temperature: 0.4,

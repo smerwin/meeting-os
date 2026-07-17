@@ -318,11 +318,11 @@ body {
   font-weight: 600;
 }
 
-.speaker.interviewer {
+.speaker.me {
   color: var(--blue);
 }
 
-.speaker.candidate {
+.speaker.them {
   color: var(--accent);
 }
 

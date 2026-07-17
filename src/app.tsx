@@ -108,8 +108,17 @@ function SetupForm({
 }
 
 const CHUNK_SECONDS = 4;
-const ROLE_INTERVIEWER = 0;
-const ROLE_CANDIDATE = 1;
+const ROLE_ME = 0;
+const ROLE_THEM = 1;
+// Whisper hallucinates ("you", "thank you", repeated garbage tokens) when fed
+// near-silent audio. Skip chunks quiet enough that there's nothing to transcribe.
+const SILENCE_RMS_THRESHOLD = 0.008;
+
+function rms(samples: Float32Array): number {
+  let sum = 0;
+  for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+  return Math.sqrt(sum / samples.length);
+}
 
 // Whisper rejects MediaRecorder's webm/opus container ("Invalid audio input").
 // Capture raw PCM via Web Audio instead and encode it as a WAV file per chunk.
@@ -178,6 +187,8 @@ function startPcmCapture(
     }
     buffers = [];
     collected = 0;
+
+    if (rms(merged) < SILENCE_RMS_THRESHOLD) return;
 
     const wav = encodeWav(merged, ctx.sampleRate);
     const framed = new Uint8Array(wav.byteLength + 1);
@@ -261,21 +272,17 @@ export default function App() {
     streamsRef.current = [mic, tab];
 
     capturesRef.current.push(
-      startPcmCapture(
-        new MediaStream(mic.getAudioTracks()),
-        ROLE_INTERVIEWER,
-        agent
-      )
+      startPcmCapture(new MediaStream(mic.getAudioTracks()), ROLE_ME, agent)
     );
 
     const tabAudioTracks = tab.getAudioTracks();
     if (tabAudioTracks.length === 0) {
       setCaptureError(
-        'No tab audio captured — when sharing, pick the Google Meet tab and enable "Share tab audio".'
+        'No tab audio captured — when sharing, pick the meeting tab and enable "Share tab audio".'
       );
     } else {
       capturesRef.current.push(
-        startPcmCapture(new MediaStream(tabAudioTracks), ROLE_CANDIDATE, agent)
+        startPcmCapture(new MediaStream(tabAudioTracks), ROLE_THEM, agent)
       );
     }
   }, [agent]);
@@ -359,10 +366,7 @@ export default function App() {
               <div key={line.id} className="line">
                 <span className="ts">{fmtTime(line.ts)}</span>{" "}
                 <span className={`speaker ${line.role}`}>
-                  {line.role === "candidate"
-                    ? state.person.name || "Candidate"
-                    : "Interviewer"}
-                  :
+                  {line.role === "them" ? state.person.name || "Them" : "Me"}:
                 </span>{" "}
                 <span className="text">{line.text}</span>
               </div>
@@ -423,7 +427,7 @@ export default function App() {
         </main>
 
         <aside className="panel person-panel">
-          <div className="panel-head">candidate</div>
+          <div className="panel-head">participant</div>
           <div className="panel-body">
             <div className="person-name">{state.person.name || "—"}</div>
             <div className="person-role">{state.person.role}</div>
