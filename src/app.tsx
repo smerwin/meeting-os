@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useAgent } from "agents/react";
 import type {
   MeetingAgent,
@@ -6,241 +6,26 @@ import type {
   NoteItem,
   TranscriptLine
 } from "./server";
-
-const EMPTY_STATE: MeetingState = {
-  status: "setup",
-  person: {
-    name: "",
-    role: "",
-    company: "",
-    email: "",
-    bio: "",
-    facts: [],
-    links: []
-  },
-  company: { name: "", summary: "", culture: [], links: [] },
-  transcript: [],
-  notes: []
-};
-
-// A DO's persisted state can predate fields added later (a running session's
-// stored `person`/`company` may lack keys this client now expects). Merge
-// whatever the server sends over these defaults so the rest of the app can
-// assume the full shape.
-function normalizeState(partial: Partial<MeetingState>): MeetingState {
-  return {
-    status: partial.status ?? EMPTY_STATE.status,
-    person: { ...EMPTY_STATE.person, ...partial.person },
-    company: { ...EMPTY_STATE.company, ...partial.company },
-    transcript: partial.transcript ?? [],
-    notes: partial.notes ?? []
-  };
-}
-
-function fmtTime(ts: number) {
-  const d = new Date(ts);
-  return d.toLocaleTimeString([], { hour12: false });
-}
-
-function StatusDot({ status }: { status: MeetingState["status"] }) {
-  const color =
-    status === "recording"
-      ? "#dc322f"
-      : status === "ended"
-        ? "#93a1a1"
-        : "#657b83";
-  return <span className="dot" style={{ background: color }} />;
-}
-
-function SetupForm({
-  onLoad,
-  onClose,
-  connected
-}: {
-  onLoad: (input: {
-    name: string;
-    company: string;
-    role: string;
-    email: string;
-  }) => void;
-  onClose?: () => void;
-  connected: boolean;
-}) {
-  const [name, setName] = useState("");
-  const [company, setCompany] = useState("");
-  const [role, setRole] = useState("");
-  const [email, setEmail] = useState("");
-
-  return (
-    <div className="setup">
-      <form
-        className="setup-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!name.trim()) return;
-          onLoad({ name, company, role, email });
-        }}
-      >
-        <div className="setup-form-head">
-          <div className="setup-title">load meeting</div>
-          {onClose && (
-            <button
-              type="button"
-              className="setup-close"
-              aria-label="Cancel"
-              onClick={onClose}
-            >
-              ✕
-            </button>
-          )}
-        </div>
-        <label>
-          name
-          <input value={name} onChange={(e) => setName(e.target.value)} />
-        </label>
-        <label>
-          role
-          <input
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            placeholder="e.g. Staff Engineer"
-          />
-        </label>
-        <label>
-          company
-          <input value={company} onChange={(e) => setCompany(e.target.value)} />
-        </label>
-        <label>
-          email
-          <input
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="for enrichment lookup"
-          />
-        </label>
-        <button
-          className="btn"
-          type="submit"
-          disabled={!connected || !name.trim()}
-        >
-          ▶ load
-        </button>
-      </form>
-    </div>
-  );
-}
-
-const CHUNK_SECONDS = 4;
-const ROLE_ME = 0;
-const ROLE_THEM = 1;
-// Whisper hallucinates ("you", "thank you", repeated garbage tokens) when fed
-// near-silent audio. Skip chunks quiet enough that there's nothing to transcribe.
-const SILENCE_RMS_THRESHOLD = 0.008;
-
-function rms(samples: Float32Array): number {
-  let sum = 0;
-  for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
-  return Math.sqrt(sum / samples.length);
-}
-
-// Whisper rejects MediaRecorder's webm/opus container ("Invalid audio input").
-// Capture raw PCM via Web Audio instead and encode it as a WAV file per chunk.
-function encodeWav(samples: Float32Array, sampleRate: number): ArrayBuffer {
-  const buffer = new ArrayBuffer(44 + samples.length * 2);
-  const view = new DataView(buffer);
-
-  function writeString(offset: number, str: string) {
-    for (let i = 0; i < str.length; i++)
-      view.setUint8(offset + i, str.charCodeAt(i));
-  }
-
-  writeString(0, "RIFF");
-  view.setUint32(4, 36 + samples.length * 2, true);
-  writeString(8, "WAVE");
-  writeString(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true); // PCM
-  view.setUint16(22, 1, true); // mono
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true); // byte rate
-  view.setUint16(32, 2, true); // block align
-  view.setUint16(34, 16, true); // bits per sample
-  writeString(36, "data");
-  view.setUint32(40, samples.length * 2, true);
-
-  let offset = 44;
-  for (let i = 0; i < samples.length; i++) {
-    const s = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-    offset += 2;
-  }
-  return buffer;
-}
-
-interface PcmCapture {
-  ctx: AudioContext;
-  stop: () => void;
-}
-
-function startPcmCapture(
-  stream: MediaStream,
-  roleByte: number,
-  agent: { send: (data: ArrayBuffer) => void }
-): PcmCapture {
-  const ctx = new AudioContext();
-  const source = ctx.createMediaStreamSource(stream);
-  const processor = ctx.createScriptProcessor(4096, 1, 1);
-  const silentGain = ctx.createGain();
-  silentGain.gain.value = 0;
-
-  const targetSamples = ctx.sampleRate * CHUNK_SECONDS;
-  let buffers: Float32Array[] = [];
-  let collected = 0;
-
-  processor.onaudioprocess = (e) => {
-    buffers.push(new Float32Array(e.inputBuffer.getChannelData(0)));
-    collected += e.inputBuffer.length;
-    if (collected < targetSamples) return;
-
-    const merged = new Float32Array(collected);
-    let pos = 0;
-    for (const buf of buffers) {
-      merged.set(buf, pos);
-      pos += buf.length;
-    }
-    buffers = [];
-    collected = 0;
-
-    if (rms(merged) < SILENCE_RMS_THRESHOLD) return;
-
-    const wav = encodeWav(merged, ctx.sampleRate);
-    const framed = new Uint8Array(wav.byteLength + 1);
-    framed[0] = roleByte;
-    framed.set(new Uint8Array(wav), 1);
-    agent.send(framed.buffer);
-  };
-
-  source.connect(processor);
-  processor.connect(silentGain);
-  silentGain.connect(ctx.destination);
-
-  return {
-    ctx,
-    stop: () => {
-      processor.disconnect();
-      source.disconnect();
-      silentGain.disconnect();
-      void ctx.close();
-    }
-  };
-}
+import { EMPTY_STATE, normalizeState } from "./lib/meetingState";
+import {
+  ROLE_ME,
+  ROLE_THEM,
+  startPcmCapture,
+  type PcmCapture
+} from "./lib/audioCapture";
+import { TopBar } from "./components/TopBar";
+import { SetupForm, type SetupFormInput } from "./components/SetupForm";
+import { CallFrame } from "./components/CallFrame";
+import { TranscriptPanel } from "./components/TranscriptPanel";
+import { NotesPanel } from "./components/NotesPanel";
+import { PersonPanel } from "./components/PersonPanel";
+import { CompanyPanel } from "./components/CompanyPanel";
 
 export default function App() {
   const [state, setState] = useState<MeetingState>(EMPTY_STATE);
   const [connected, setConnected] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [creatingNew, setCreatingNew] = useState(false);
-  const transcriptRef = useRef<HTMLDivElement>(null);
   const streamsRef = useRef<MediaStream[]>([]);
   const capturesRef = useRef<PcmCapture[]>([]);
 
@@ -266,13 +51,6 @@ export default function App() {
     }, [])
   });
 
-  useEffect(() => {
-    transcriptRef.current?.scrollTo({
-      top: transcriptRef.current.scrollHeight,
-      behavior: "smooth"
-    });
-  }, [state.transcript.length]);
-
   const stopCapture = useCallback(() => {
     for (const capture of capturesRef.current) capture.stop();
     capturesRef.current = [];
@@ -281,8 +59,6 @@ export default function App() {
     }
     streamsRef.current = [];
   }, []);
-
-  useEffect(() => stopCapture, [stopCapture]);
 
   const startCapture = useCallback(async () => {
     setCaptureError(null);
@@ -310,12 +86,7 @@ export default function App() {
     }
   }, [agent]);
 
-  const handleLoad = (input: {
-    name: string;
-    company: string;
-    role: string;
-    email: string;
-  }) => {
+  const handleLoad = (input: SetupFormInput) => {
     stopCapture();
     agent.stub.loadPerson(input);
     setCreatingNew(false);
@@ -341,13 +112,7 @@ export default function App() {
   if (state.status === "setup") {
     return (
       <div className="shell">
-        <header className="topbar">
-          <span className="brand">meeting-os</span>
-          <div className="spacer" />
-          <span className={`conn ${connected ? "on" : "off"}`}>
-            {connected ? "● connected" : "○ disconnected"}
-          </span>
-        </header>
+        <TopBar connected={connected} />
         <SetupForm onLoad={handleLoad} connected={connected} />
       </div>
     );
@@ -355,34 +120,16 @@ export default function App() {
 
   return (
     <div className="shell">
-      <header className="topbar">
-        <span className="brand">meeting-os</span>
-        <span className="sep">/</span>
-        <span className="session">{state.person.name}</span>
-        <div className="spacer" />
-        <div className="record-controls">
-          <button
-            className="btn btn-sm"
-            disabled={!connected || state.status === "recording"}
-            onClick={handleStart}
-          >
-            ▶ start
-          </button>
-          <button
-            className="btn btn-sm"
-            disabled={!connected || state.status !== "recording"}
-            onClick={handleStop}
-          >
-            ■ stop
-          </button>
-        </div>
-        <span className={`conn ${connected ? "on" : "off"}`}>
-          {connected ? "● connected" : "○ disconnected"}
-        </span>
-        <button className="btn btn-sm" onClick={() => setCreatingNew(true)}>
-          ↺ new meeting
-        </button>
-      </header>
+      <TopBar
+        connected={connected}
+        session={{
+          personName: state.person.name,
+          status: state.status,
+          onStart: handleStart,
+          onStop: handleStop,
+          onNewMeeting: () => setCreatingNew(true)
+        }}
+      />
 
       {captureError && (
         <div className="capture-error-banner">{captureError}</div>
@@ -399,156 +146,27 @@ export default function App() {
       )}
 
       <div className="grid">
-        <aside className="panel transcript-panel">
-          <div className="panel-head">transcript</div>
-          <div className="panel-body scroll" ref={transcriptRef}>
-            {state.transcript.length === 0 && (
-              <div className="empty">-- waiting for audio --</div>
-            )}
-            {state.transcript.map((line) => (
-              <div key={line.id} className="line">
-                <span className="ts">{fmtTime(line.ts)}</span>{" "}
-                <span className={`speaker ${line.role}`}>
-                  {line.role === "them" ? state.person.name || "Them" : "Me"}:
-                </span>{" "}
-                <span className="text">{line.text}</span>
-              </div>
-            ))}
-          </div>
-        </aside>
+        <TranscriptPanel
+          transcript={state.transcript}
+          personName={state.person.name}
+        />
 
         <main className="center">
-          <div className="inset-frame">
-            <div className="inset-bezel">
-              <div className="rec-indicator">
-                <StatusDot status={state.status} />
-                <span>{state.status}</span>
-              </div>
-              <div className="call-surface">
-                <span className="call-placeholder">
-                  {state.status === "recording"
-                    ? "[ streaming mic + shared tab audio to whisper ]"
-                    : "[ click start, then share the meeting tab (with tab audio) ]"}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <section className="panel notes-panel">
-            <div className="panel-head">live notes</div>
-            <div className="panel-body scroll">
-              {state.notes.length === 0 && (
-                <div className="empty">-- no notes yet --</div>
-              )}
-              {state.notes.map((note) => (
-                <div key={note.id} className="note">
-                  <span className="bullet">›</span> {note.text}
-                </div>
-              ))}
-            </div>
-          </section>
+          <CallFrame status={state.status} />
+          <NotesPanel notes={state.notes} />
         </main>
 
         <aside className="side-col">
-          <div className="panel person-panel">
-            <div className="panel-head panel-head-row">
-              <span>participant</span>
-              <button
-                className="panel-action"
-                disabled={!connected || !state.person.name}
-                onClick={() => agent.stub.refreshEnrichment()}
-                aria-label="Refresh enrichment"
-              >
-                ↻ refresh
-              </button>
-            </div>
-            <div className="panel-body scroll">
-              <div className="person-name">{state.person.name || "—"}</div>
-              <div className="person-role">{state.person.role}</div>
-              <div className="person-company">{state.person.company}</div>
-              <div className="hr" />
-              <div className="person-bio">
-                {state.person.bio || "-- no enrichment data yet --"}
-              </div>
-              {state.person.facts.length > 0 && (
-                <>
-                  <div className="hr" />
-                  <ul className="facts">
-                    {state.person.facts.map((fact) => (
-                      <li key={fact}>{fact}</li>
-                    ))}
-                  </ul>
-                </>
-              )}
-              {state.person.links.length > 0 && (
-                <>
-                  <div className="hr" />
-                  <div className="links">
-                    {state.person.links.map((l) => (
-                      <a
-                        key={l.url}
-                        href={l.url}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        {l.label} ↗
-                      </a>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-
-          {state.company.name && (
-            <div className="panel company-panel">
-              <div className="panel-head panel-head-row">
-                <span>company</span>
-                <button
-                  className="panel-action"
-                  disabled={!connected}
-                  onClick={() => agent.stub.refreshCompanyEnrichment()}
-                  aria-label="Refresh company enrichment"
-                >
-                  ↻ refresh
-                </button>
-              </div>
-              <div className="panel-body scroll">
-                <div className="person-name">{state.company.name}</div>
-                <div className="hr" />
-                <div className="person-bio">
-                  {state.company.summary || "-- no enrichment data yet --"}
-                </div>
-                {state.company.culture.length > 0 && (
-                  <>
-                    <div className="hr" />
-                    <ul className="facts">
-                      {state.company.culture.map((point) => (
-                        <li key={point}>{point}</li>
-                      ))}
-                    </ul>
-                  </>
-                )}
-                {state.company.links.length > 0 && (
-                  <>
-                    <div className="hr" />
-                    <div className="links">
-                      {state.company.links.map((l) => (
-                        <a
-                          key={l.url}
-                          href={l.url}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {l.label} ↗
-                        </a>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
+          <PersonPanel
+            person={state.person}
+            connected={connected}
+            onRefresh={() => agent.stub.refreshEnrichment()}
+          />
+          <CompanyPanel
+            company={state.company}
+            connected={connected}
+            onRefresh={() => agent.stub.refreshCompanyEnrichment()}
+          />
         </aside>
       </div>
     </div>
