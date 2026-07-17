@@ -1,4 +1,10 @@
-import { Agent, callable, routeAgentRequest, type Connection } from "agents";
+import {
+  Agent,
+  callable,
+  routeAgentRequest,
+  type Connection,
+  type WSMessage
+} from "agents";
 
 export type Role = "candidate" | "interviewer";
 
@@ -39,28 +45,6 @@ const EMPTY_PERSON: PersonInfo = {
   bio: "",
   links: []
 };
-
-const FIXTURE_TRANSCRIPT: { role: Role; text: string }[] = [
-  { role: "interviewer", text: "Thanks for joining — walk me through the migration project." },
-  { role: "candidate", text: "Sure. We had a Rails monolith hitting scaling limits around 2021." },
-  { role: "candidate", text: "First step was carving out the payments path into its own service." },
-  { role: "interviewer", text: "What was the hardest part of that split?" },
-  { role: "candidate", text: "Data consistency during the transition — we ran dual writes for about 3 months." },
-  { role: "candidate", text: "Eventually moved to event-sourced ledger to kill the dual-write class of bugs entirely." },
-  { role: "interviewer", text: "How did you validate correctness before cutting over?" },
-  { role: "candidate", text: "Shadow traffic diffing — replayed prod requests against both paths, diffed outputs nightly." }
-];
-
-const FIXTURE_NOTES: Omit<NoteItem, "id" | "ts">[] = [
-  { text: "Strong hands-on migration experience (monolith → services)." },
-  { text: "Comfortable discussing tradeoffs, not just outcomes — cites dual-write pain directly." },
-  { text: "Shadow-traffic diffing for correctness — good signal for rigor." },
-  { text: "Follow up: ask about team size and rollback plan if migration failed." }
-];
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 interface SearchResult {
   title: string;
@@ -118,7 +102,8 @@ Respond with ONLY valid JSON, no markdown fences, in this exact shape:
 
   const raw = (result as { response?: string }).response ?? "";
   const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error(`No JSON in model response: ${raw.slice(0, 200)}`);
+  if (!match)
+    throw new Error(`No JSON in model response: ${raw.slice(0, 200)}`);
 
   const parsed = JSON.parse(match[0]) as {
     bio?: string;
@@ -143,7 +128,12 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
   }
 
   @callable()
-  async loadPerson(input: { name: string; company: string; role: string; email: string }) {
+  async loadPerson(input: {
+    name: string;
+    company: string;
+    role: string;
+    email: string;
+  }) {
     const person: PersonInfo = {
       name: input.name.trim(),
       role: input.role.trim(),
@@ -176,7 +166,10 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
 
       // person may have changed (reset / new meeting) while we were fetching
       if (this.state.person.name !== forName) return;
-      this.setState({ ...this.state, person: { ...this.state.person, bio, links } });
+      this.setState({
+        ...this.state,
+        person: { ...this.state.person, bio, links }
+      });
       this.broadcast(JSON.stringify({ type: "state", state: this.state }));
     } catch (err) {
       console.error("enrichment failed:", err);
@@ -204,7 +197,6 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
       notes: []
     });
     this.broadcast(JSON.stringify({ type: "state", state: this.state }));
-    this.simulate();
     return { ok: true };
   }
 
@@ -215,16 +207,33 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
     return { ok: true };
   }
 
-  private async simulate() {
-    for (let i = 0; i < FIXTURE_TRANSCRIPT.length; i++) {
-      if (this.state.status !== "recording") return;
-      await sleep(1400);
-      if ((this.state as MeetingState).status !== "recording") return;
+  // Client frames audio chunks as: [roleByte, ...audioBytes]. roleByte 0 = interviewer
+  // (local mic), 1 = candidate (shared tab audio from the call).
+  async onMessage(conn: Connection, message: WSMessage) {
+    if (typeof message === "string" || !(message instanceof ArrayBuffer))
+      return;
+    if (this.state.status !== "recording") return;
+    if (message.byteLength < 2) return;
+
+    const bytes = new Uint8Array(message);
+    const role: Role = bytes[0] === 1 ? "candidate" : "interviewer";
+    const audio = bytes.subarray(1);
+    await this.transcribeChunk(role, audio);
+  }
+
+  private async transcribeChunk(role: Role, audio: Uint8Array) {
+    try {
+      const result = await this.env.AI.run("@cf/openai/whisper", {
+        audio: [...audio]
+      });
+      const text = (result as { text?: string }).text?.trim();
+      if (!text) return;
 
       const line: TranscriptLine = {
         id: crypto.randomUUID(),
-        ts: Date.now(),
-        ...FIXTURE_TRANSCRIPT[i]
+        role,
+        text,
+        ts: Date.now()
       };
       this.setState({
         ...this.state,
@@ -232,22 +241,40 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
       });
       this.broadcast(JSON.stringify({ type: "transcript", line }));
 
-      if (i % 2 === 1 && FIXTURE_NOTES[(i - 1) / 2]) {
-        const note: NoteItem = {
-          id: crypto.randomUUID(),
-          ts: Date.now(),
-          ...FIXTURE_NOTES[(i - 1) / 2]
-        };
-        this.setState({
-          ...this.state,
-          notes: [...this.state.notes, note]
-        });
-        this.broadcast(JSON.stringify({ type: "note", note }));
-      }
+      await this.maybeGenerateNote();
+    } catch (err) {
+      console.error("transcription failed:", err);
     }
-    if (this.state.status === "recording") {
-      this.setState({ ...this.state, status: "ended" });
-      this.broadcast(JSON.stringify({ type: "state", state: this.state }));
+  }
+
+  private async maybeGenerateNote() {
+    const t = this.state.transcript;
+    if (t.length === 0 || t.length % 4 !== 0) return;
+
+    const recent = t
+      .slice(-6)
+      .map((l) => `${l.role}: ${l.text}`)
+      .join("\n");
+
+    try {
+      const result = await this.env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
+        messages: [
+          {
+            role: "user",
+            content: `You're assisting an interviewer live during a call. Based on this recent exchange, write ONE short note (max 20 words) capturing a key signal, a follow-up question, or a red/green flag. Respond with just the note text, nothing else.\n\n${recent}`
+          }
+        ],
+        temperature: 0.4,
+        max_tokens: 60
+      });
+      const text = (result as { response?: string }).response?.trim();
+      if (!text) return;
+
+      const note: NoteItem = { id: crypto.randomUUID(), text, ts: Date.now() };
+      this.setState({ ...this.state, notes: [...this.state.notes, note] });
+      this.broadcast(JSON.stringify({ type: "note", note }));
+    } catch (err) {
+      console.error("note generation failed:", err);
     }
   }
 }

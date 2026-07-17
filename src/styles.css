@@ -17,7 +17,9 @@ body,
   --accent-dim: #6b7a00;
   --danger: #dc322f;
   --blue: #268bd2;
-  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+  --mono:
+    ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas,
+    monospace;
 }
 
 * {
@@ -176,8 +178,14 @@ body {
 
 .controls {
   display: flex;
+  align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+
+.capture-error {
+  color: var(--danger);
+  font-size: 11px;
 }
 
 .btn {

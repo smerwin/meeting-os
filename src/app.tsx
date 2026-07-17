@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAgent } from "agents/react";
-import type { MeetingAgent, MeetingState, NoteItem, TranscriptLine } from "./server";
+import type {
+  MeetingAgent,
+  MeetingState,
+  NoteItem,
+  TranscriptLine
+} from "./server";
 
 const EMPTY_STATE: MeetingState = {
   status: "setup",
@@ -16,7 +21,11 @@ function fmtTime(ts: number) {
 
 function StatusDot({ status }: { status: MeetingState["status"] }) {
   const color =
-    status === "recording" ? "#dc322f" : status === "ended" ? "#93a1a1" : "#657b83";
+    status === "recording"
+      ? "#dc322f"
+      : status === "ended"
+        ? "#93a1a1"
+        : "#657b83";
   return <span className="dot" style={{ background: color }} />;
 }
 
@@ -24,7 +33,12 @@ function SetupForm({
   onLoad,
   connected
 }: {
-  onLoad: (input: { name: string; company: string; role: string; email: string }) => void;
+  onLoad: (input: {
+    name: string;
+    company: string;
+    role: string;
+    email: string;
+  }) => void;
   connected: boolean;
 }) {
   const [name, setName] = useState("");
@@ -45,11 +59,15 @@ function SetupForm({
         <div className="setup-title">load meeting</div>
         <label>
           name
-          <input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+          <input value={name} onChange={(e) => setName(e.target.value)} />
         </label>
         <label>
           role
-          <input value={role} onChange={(e) => setRole(e.target.value)} placeholder="e.g. Staff Engineer" />
+          <input
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+            placeholder="e.g. Staff Engineer"
+          />
         </label>
         <label>
           company
@@ -57,9 +75,17 @@ function SetupForm({
         </label>
         <label>
           email
-          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="for enrichment lookup" />
+          <input
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="for enrichment lookup"
+          />
         </label>
-        <button className="btn" type="submit" disabled={!connected || !name.trim()}>
+        <button
+          className="btn"
+          type="submit"
+          disabled={!connected || !name.trim()}
+        >
           ▶ load
         </button>
       </form>
@@ -67,10 +93,30 @@ function SetupForm({
   );
 }
 
+const CHUNK_MS = 4000;
+const ROLE_INTERVIEWER = 0;
+const ROLE_CANDIDATE = 1;
+
+async function sendChunk(
+  agent: { send: (data: ArrayBuffer) => void },
+  roleByte: number,
+  blob: Blob
+) {
+  if (blob.size === 0) return;
+  const buf = await blob.arrayBuffer();
+  const framed = new Uint8Array(buf.byteLength + 1);
+  framed[0] = roleByte;
+  framed.set(new Uint8Array(buf), 1);
+  agent.send(framed.buffer);
+}
+
 export default function App() {
   const [state, setState] = useState<MeetingState>(EMPTY_STATE);
   const [connected, setConnected] = useState(false);
+  const [captureError, setCaptureError] = useState<string | null>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const streamsRef = useRef<MediaStream[]>([]);
+  const recordersRef = useRef<MediaRecorder[]>([]);
 
   const agent = useAgent<MeetingAgent>({
     agent: "MeetingAgent",
@@ -101,11 +147,79 @@ export default function App() {
     });
   }, [state.transcript.length]);
 
-  const handleLoad = (input: { name: string; company: string; role: string; email: string }) =>
-    agent.stub.loadPerson(input);
-  const handleReset = () => agent.stub.reset();
-  const handleStart = () => agent.stub.start();
-  const handleStop = () => agent.stub.stop();
+  const stopCapture = useCallback(() => {
+    for (const rec of recordersRef.current) {
+      if (rec.state !== "inactive") rec.stop();
+    }
+    recordersRef.current = [];
+    for (const stream of streamsRef.current) {
+      for (const track of stream.getTracks()) track.stop();
+    }
+    streamsRef.current = [];
+  }, []);
+
+  useEffect(() => stopCapture, [stopCapture]);
+
+  const startCapture = useCallback(async () => {
+    setCaptureError(null);
+
+    const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const tab = await navigator.mediaDevices.getDisplayMedia({
+      video: true,
+      audio: true
+    });
+    streamsRef.current = [mic, tab];
+
+    const micRec = new MediaRecorder(new MediaStream(mic.getAudioTracks()), {
+      mimeType: "audio/webm;codecs=opus"
+    });
+    micRec.ondataavailable = (e) => sendChunk(agent, ROLE_INTERVIEWER, e.data);
+    micRec.start(CHUNK_MS);
+    recordersRef.current.push(micRec);
+
+    const tabAudioTracks = tab.getAudioTracks();
+    if (tabAudioTracks.length === 0) {
+      setCaptureError(
+        'No tab audio captured — when sharing, pick the Google Meet tab and enable "Share tab audio".'
+      );
+    } else {
+      const tabRec = new MediaRecorder(new MediaStream(tabAudioTracks), {
+        mimeType: "audio/webm;codecs=opus"
+      });
+      tabRec.ondataavailable = (e) => sendChunk(agent, ROLE_CANDIDATE, e.data);
+      tabRec.start(CHUNK_MS);
+      recordersRef.current.push(tabRec);
+    }
+  }, [agent]);
+
+  const handleLoad = (input: {
+    name: string;
+    company: string;
+    role: string;
+    email: string;
+  }) => agent.stub.loadPerson(input);
+
+  const handleReset = () => {
+    stopCapture();
+    agent.stub.reset();
+  };
+
+  const handleStart = async () => {
+    try {
+      await startCapture();
+    } catch (err) {
+      setCaptureError(
+        err instanceof Error ? err.message : "Failed to start audio capture."
+      );
+      return;
+    }
+    agent.stub.start();
+  };
+
+  const handleStop = () => {
+    stopCapture();
+    agent.stub.stop();
+  };
 
   if (state.status === "setup") {
     return (
@@ -148,7 +262,10 @@ export default function App() {
               <div key={line.id} className="line">
                 <span className="ts">{fmtTime(line.ts)}</span>{" "}
                 <span className={`speaker ${line.role}`}>
-                  {line.role === "candidate" ? state.person.name || "Candidate" : "Interviewer"}:
+                  {line.role === "candidate"
+                    ? state.person.name || "Candidate"
+                    : "Interviewer"}
+                  :
                 </span>{" "}
                 <span className="text">{line.text}</span>
               </div>
@@ -165,7 +282,9 @@ export default function App() {
               </div>
               <div className="call-surface">
                 <span className="call-placeholder">
-                  [ webrtc call surface — camera/mic feed renders here ]
+                  {state.status === "recording"
+                    ? "[ streaming mic + shared tab audio to whisper ]"
+                    : "[ click start, then share the Google Meet tab (with tab audio) ]"}
                 </span>
               </div>
             </div>
@@ -186,6 +305,9 @@ export default function App() {
             >
               ■ stop
             </button>
+            {captureError && (
+              <span className="capture-error">{captureError}</span>
+            )}
           </div>
 
           <section className="panel notes-panel">
@@ -218,7 +340,12 @@ export default function App() {
                 <div className="hr" />
                 <div className="links">
                   {state.person.links.map((l) => (
-                    <a key={l.url} href={l.url} target="_blank" rel="noreferrer">
+                    <a
+                      key={l.url}
+                      href={l.url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
                       {l.label} ↗
                     </a>
                   ))}
