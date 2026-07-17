@@ -1,8 +1,10 @@
 import { Agent, callable, routeAgentRequest, type Connection } from "agents";
 
+export type Role = "candidate" | "interviewer";
+
 export interface TranscriptLine {
   id: string;
-  speaker: string;
+  role: Role;
   text: string;
   ts: number;
 }
@@ -17,38 +19,36 @@ export interface PersonInfo {
   name: string;
   role: string;
   company: string;
+  email: string;
   bio: string;
   links: { label: string; url: string }[];
 }
 
 export interface MeetingState {
-  status: "idle" | "recording" | "ended";
+  status: "setup" | "idle" | "recording" | "ended";
   person: PersonInfo;
   transcript: TranscriptLine[];
   notes: NoteItem[];
 }
 
-const FIXTURE_PERSON: PersonInfo = {
-  name: "Jordan Reyes",
-  role: "Staff Engineer, Platform",
-  company: "Northwind Systems",
-  bio: "9y backend/infra. Led migration off monolith to services at Northwind. Previously at Stripe (payments infra). Open source: maintainer of a mid-size Go queue library.",
-  links: [
-    { label: "LinkedIn", url: "https://linkedin.com/in/example" },
-    { label: "GitHub", url: "https://github.com/example" },
-    { label: "Company", url: "https://northwind.example.com" }
-  ]
+const EMPTY_PERSON: PersonInfo = {
+  name: "",
+  role: "",
+  company: "",
+  email: "",
+  bio: "",
+  links: []
 };
 
-const FIXTURE_TRANSCRIPT: Omit<TranscriptLine, "id" | "ts">[] = [
-  { speaker: "Interviewer", text: "Thanks for joining — walk me through the migration project." },
-  { speaker: "Jordan", text: "Sure. We had a Rails monolith hitting scaling limits around 2021." },
-  { speaker: "Jordan", text: "First step was carving out the payments path into its own service." },
-  { speaker: "Interviewer", text: "What was the hardest part of that split?" },
-  { speaker: "Jordan", text: "Data consistency during the transition — we ran dual writes for about 3 months." },
-  { speaker: "Jordan", text: "Eventually moved to event-sourced ledger to kill the dual-write class of bugs entirely." },
-  { speaker: "Interviewer", text: "How did you validate correctness before cutting over?" },
-  { speaker: "Jordan", text: "Shadow traffic diffing — replayed prod requests against both paths, diffed outputs nightly." }
+const FIXTURE_TRANSCRIPT: { role: Role; text: string }[] = [
+  { role: "interviewer", text: "Thanks for joining — walk me through the migration project." },
+  { role: "candidate", text: "Sure. We had a Rails monolith hitting scaling limits around 2021." },
+  { role: "candidate", text: "First step was carving out the payments path into its own service." },
+  { role: "interviewer", text: "What was the hardest part of that split?" },
+  { role: "candidate", text: "Data consistency during the transition — we ran dual writes for about 3 months." },
+  { role: "candidate", text: "Eventually moved to event-sourced ledger to kill the dual-write class of bugs entirely." },
+  { role: "interviewer", text: "How did you validate correctness before cutting over?" },
+  { role: "candidate", text: "Shadow traffic diffing — replayed prod requests against both paths, diffed outputs nightly." }
 ];
 
 const FIXTURE_NOTES: Omit<NoteItem, "id" | "ts">[] = [
@@ -64,14 +64,46 @@ function sleep(ms: number) {
 
 export class MeetingAgent extends Agent<Env, MeetingState> {
   initialState: MeetingState = {
-    status: "idle",
-    person: FIXTURE_PERSON,
+    status: "setup",
+    person: EMPTY_PERSON,
     transcript: [],
     notes: []
   };
 
   async onConnect(conn: Connection) {
     conn.send(JSON.stringify({ type: "state", state: this.state }));
+  }
+
+  @callable()
+  async loadPerson(input: { name: string; company: string; role: string; email: string }) {
+    const person: PersonInfo = {
+      name: input.name.trim(),
+      role: input.role.trim(),
+      company: input.company.trim(),
+      email: input.email.trim(),
+      bio: "",
+      links: []
+    };
+    this.setState({
+      status: "idle",
+      person,
+      transcript: [],
+      notes: []
+    });
+    this.broadcast(JSON.stringify({ type: "state", state: this.state }));
+    return { ok: true };
+  }
+
+  @callable()
+  async reset() {
+    this.setState({
+      status: "setup",
+      person: EMPTY_PERSON,
+      transcript: [],
+      notes: []
+    });
+    this.broadcast(JSON.stringify({ type: "state", state: this.state }));
+    return { ok: true };
   }
 
   @callable()

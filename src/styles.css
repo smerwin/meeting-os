@@ -202,6 +202,65 @@ body {
   opacity: 0.5;
 }
 
+.btn-sm {
+  font-size: 11px;
+  padding: 3px 10px;
+  margin-left: 12px;
+}
+
+.setup {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.setup-form {
+  width: 340px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.setup-title {
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 10px;
+  margin-bottom: 4px;
+}
+
+.setup-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.setup-form input {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+
+.setup-form input:focus {
+  outline: none;
+  border-color: var(--accent-dim);
+}
+
+.setup-form .btn {
+  margin-top: 6px;
+}
+
 .notes-panel {
   flex: 0 0 40%;
   border: 1px solid var(--line);
@@ -220,11 +279,11 @@ body {
   font-weight: 600;
 }
 
-.speaker.you {
+.speaker.interviewer {
   color: var(--blue);
 }
 
-.speaker.them {
+.speaker.candidate {
   color: var(--accent);
 }
 
