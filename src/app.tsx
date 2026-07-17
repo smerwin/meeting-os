@@ -9,7 +9,15 @@ import type {
 
 const EMPTY_STATE: MeetingState = {
   status: "setup",
-  person: { name: "", role: "", company: "", email: "", bio: "", links: [] },
+  person: {
+    name: "",
+    role: "",
+    company: "",
+    email: "",
+    bio: "",
+    facts: [],
+    links: []
+  },
   transcript: [],
   notes: []
 };
@@ -446,6 +454,16 @@ export default function App() {
             <div className="person-bio">
               {state.person.bio || "-- no enrichment data yet --"}
             </div>
+            {(state.person.facts ?? []).length > 0 && (
+              <>
+                <div className="hr" />
+                <ul className="facts">
+                  {state.person.facts.map((fact) => (
+                    <li key={fact}>{fact}</li>
+                  ))}
+                </ul>
+              </>
+            )}
             {state.person.links.length > 0 && (
               <>
                 <div className="hr" />

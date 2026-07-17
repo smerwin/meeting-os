@@ -388,6 +388,23 @@ body {
   color: var(--text);
 }
 
+.facts {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.facts li {
+  padding-left: 2px;
+}
+
+.facts li::marker {
+  color: var(--accent);
+}
+
 .links {
   display: flex;
   flex-direction: column;

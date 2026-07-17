@@ -27,6 +27,7 @@ export interface PersonInfo {
   company: string;
   email: string;
   bio: string;
+  facts: string[];
   links: { label: string; url: string }[];
 }
 
@@ -43,6 +44,7 @@ const EMPTY_PERSON: PersonInfo = {
   company: "",
   email: "",
   bio: "",
+  facts: [],
   links: []
 };
 
@@ -66,11 +68,46 @@ async function braveSearch(env: Env, query: string): Promise<SearchResult[]> {
   const data = (await res.json()) as {
     web?: { results?: { title: string; url: string; description: string }[] };
   };
-  return (data.web?.results ?? []).slice(0, 6).map((r) => ({
+  return (data.web?.results ?? []).slice(0, 5).map((r) => ({
     title: r.title,
     url: r.url,
     description: r.description
   }));
+}
+
+// One generic query misses a lot — LinkedIn/GitHub/news rarely surface high
+// enough in a plain "name company" search. Run several targeted queries in
+// parallel and merge, so a thin generic result set doesn't sink the whole
+// enrichment (Promise.allSettled — one bad/rate-limited query shouldn't
+// cost us the others).
+async function braveSearchMulti(
+  env: Env,
+  name: string,
+  company: string
+): Promise<SearchResult[]> {
+  const base = [name, company].filter(Boolean).join(" ");
+  const queries = [
+    base,
+    `${name} linkedin`,
+    `${name} github`,
+    `${name} news OR interview OR podcast`
+  ];
+
+  const settled = await Promise.allSettled(
+    queries.map((q) => braveSearch(env, q))
+  );
+
+  const seen = new Set<string>();
+  const merged: SearchResult[] = [];
+  for (const outcome of settled) {
+    if (outcome.status !== "fulfilled") continue;
+    for (const item of outcome.value) {
+      if (seen.has(item.url)) continue;
+      seen.add(item.url);
+      merged.push(item);
+    }
+  }
+  return merged.slice(0, 16);
 }
 
 // Workers AI text-gen models don't have a consistent output shape across
@@ -93,7 +130,11 @@ async function synthesizePerson(
   env: Env,
   person: PersonInfo,
   results: SearchResult[]
-): Promise<{ bio: string; links: { label: string; url: string }[] }> {
+): Promise<{
+  bio: string;
+  facts: string[];
+  links: { label: string; url: string }[];
+}> {
   const context = results
     .map((r, i) => `[${i + 1}] ${r.title}\n${r.url}\n${r.description}`)
     .join("\n\n");
@@ -102,23 +143,31 @@ async function synthesizePerson(
 
 Person: ${person.name}${person.role ? `, ${person.role}` : ""}${person.company ? ` at ${person.company}` : ""}
 
-Search results:
+Search results (from multiple queries — general, LinkedIn, GitHub, news/interviews):
 ${context}
 
-Write a short professional background summary (2-4 sentences, factual, no speculation — only use what's in the search results). Then list up to 4 relevant links (LinkedIn, GitHub, company site, articles) from the results above that are clearly about this specific person.
+Write a short professional background summary (2-4 sentences, factual, no speculation — only use what's in the search results).
+
+Then list up to 5 short "facts" — scannable talking points someone could reference in a live conversation. Prioritize: notable projects/repos, career moves, recent news or publications, anything conversation-worthy. Each fact should be one line, specific, and sourced from the results (not generic).
+
+Then list up to 5 relevant links (LinkedIn, GitHub, personal site, articles) from the results above that are clearly about this specific person.
 
 Respond with ONLY valid JSON, no markdown fences, in this exact shape:
-{"bio": "...", "links": [{"label": "...", "url": "..."}]}`;
+{"bio": "...", "facts": ["...", "..."], "links": [{"label": "...", "url": "..."}]}`;
 
   const result = await env.AI.run("@cf/meta/llama-3.1-8b-instruct-fast", {
     messages: [{ role: "user", content: prompt }],
     temperature: 0.2,
-    max_tokens: 400
+    max_tokens: 700
   });
 
   const response = (result as AiTextResult).response;
 
-  let parsed: { bio?: string; links?: { label: string; url: string }[] };
+  let parsed: {
+    bio?: string;
+    facts?: string[];
+    links?: { label: string; url: string }[];
+  };
   if (response && typeof response === "object") {
     // "-fast" variant already parsed the JSON for us.
     parsed = response as typeof parsed;
@@ -132,6 +181,7 @@ Respond with ONLY valid JSON, no markdown fences, in this exact shape:
 
   return {
     bio: parsed.bio ?? "",
+    facts: Array.isArray(parsed.facts) ? parsed.facts : [],
     links: Array.isArray(parsed.links) ? parsed.links : []
   };
 }
@@ -161,6 +211,7 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
       company: input.company.trim(),
       email: input.email.trim(),
       bio: "",
+      facts: [],
       links: []
     };
     this.setState({
@@ -187,17 +238,24 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
     if (person.name !== forName || !person.name) return;
 
     try {
-      const query = [person.name, person.company].filter(Boolean).join(" ");
-      const results = await braveSearch(this.env, query);
+      const results = await braveSearchMulti(
+        this.env,
+        person.name,
+        person.company
+      );
       if (results.length === 0) return;
 
-      const { bio, links } = await synthesizePerson(this.env, person, results);
+      const { bio, facts, links } = await synthesizePerson(
+        this.env,
+        person,
+        results
+      );
 
       // person may have changed (reset / new meeting) while we were fetching
       if (this.state.person.name !== forName) return;
       this.setState({
         ...this.state,
-        person: { ...this.state.person, bio, links }
+        person: { ...this.state.person, bio, facts, links }
       });
       this.broadcast(JSON.stringify({ type: "state", state: this.state }));
     } catch (err) {
