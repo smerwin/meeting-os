@@ -13,14 +13,14 @@
   "durable_objects": {
     "bindings": [
       {
-        "class_name": "ChatAgent",
-        "name": "ChatAgent"
+        "class_name": "MeetingAgent",
+        "name": "MeetingAgent"
       }
     ]
   },
   "migrations": [
     {
-      "new_sqlite_classes": ["ChatAgent"],
+      "new_sqlite_classes": ["MeetingAgent"],
       "tag": "v1"
     }
   ]

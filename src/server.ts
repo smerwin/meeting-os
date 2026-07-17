@@ -1,202 +1,134 @@
-import { createWorkersAI } from "workers-ai-provider";
-import { callable, routeAgentRequest, type Schedule } from "agents";
-import { getSchedulePrompt, scheduleSchema } from "agents/schedule";
-import { AIChatAgent, type OnChatMessageOptions } from "@cloudflare/ai-chat";
-import {
-  convertToModelMessages,
-  pruneMessages,
-  stepCountIs,
-  streamText,
-  tool
-} from "ai";
-import { z } from "zod";
+import { Agent, callable, routeAgentRequest, type Connection } from "agents";
 
-export class ChatAgent extends AIChatAgent<Env> {
-  maxPersistedMessages = 100;
-  chatRecovery = true;
+export interface TranscriptLine {
+  id: string;
+  speaker: string;
+  text: string;
+  ts: number;
+}
 
-  onStart() {
-    // Configure OAuth popup behavior for MCP servers that require authentication
-    this.mcp.configureOAuthCallback({
-      customHandler: (result) => {
-        if (result.authSuccess) {
-          return new Response("<script>window.close();</script>", {
-            headers: { "content-type": "text/html" },
-            status: 200
-          });
-        }
-        return new Response(
-          `Authentication Failed: ${result.authError || "Unknown error"}`,
-          { headers: { "content-type": "text/plain" }, status: 400 }
-        );
+export interface NoteItem {
+  id: string;
+  text: string;
+  ts: number;
+}
+
+export interface PersonInfo {
+  name: string;
+  role: string;
+  company: string;
+  bio: string;
+  links: { label: string; url: string }[];
+}
+
+export interface MeetingState {
+  status: "idle" | "recording" | "ended";
+  person: PersonInfo;
+  transcript: TranscriptLine[];
+  notes: NoteItem[];
+}
+
+const FIXTURE_PERSON: PersonInfo = {
+  name: "Jordan Reyes",
+  role: "Staff Engineer, Platform",
+  company: "Northwind Systems",
+  bio: "9y backend/infra. Led migration off monolith to services at Northwind. Previously at Stripe (payments infra). Open source: maintainer of a mid-size Go queue library.",
+  links: [
+    { label: "LinkedIn", url: "https://linkedin.com/in/example" },
+    { label: "GitHub", url: "https://github.com/example" },
+    { label: "Company", url: "https://northwind.example.com" }
+  ]
+};
+
+const FIXTURE_TRANSCRIPT: Omit<TranscriptLine, "id" | "ts">[] = [
+  { speaker: "Interviewer", text: "Thanks for joining — walk me through the migration project." },
+  { speaker: "Jordan", text: "Sure. We had a Rails monolith hitting scaling limits around 2021." },
+  { speaker: "Jordan", text: "First step was carving out the payments path into its own service." },
+  { speaker: "Interviewer", text: "What was the hardest part of that split?" },
+  { speaker: "Jordan", text: "Data consistency during the transition — we ran dual writes for about 3 months." },
+  { speaker: "Jordan", text: "Eventually moved to event-sourced ledger to kill the dual-write class of bugs entirely." },
+  { speaker: "Interviewer", text: "How did you validate correctness before cutting over?" },
+  { speaker: "Jordan", text: "Shadow traffic diffing — replayed prod requests against both paths, diffed outputs nightly." }
+];
+
+const FIXTURE_NOTES: Omit<NoteItem, "id" | "ts">[] = [
+  { text: "Strong hands-on migration experience (monolith → services)." },
+  { text: "Comfortable discussing tradeoffs, not just outcomes — cites dual-write pain directly." },
+  { text: "Shadow-traffic diffing for correctness — good signal for rigor." },
+  { text: "Follow up: ask about team size and rollback plan if migration failed." }
+];
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export class MeetingAgent extends Agent<Env, MeetingState> {
+  initialState: MeetingState = {
+    status: "idle",
+    person: FIXTURE_PERSON,
+    transcript: [],
+    notes: []
+  };
+
+  async onConnect(conn: Connection) {
+    conn.accept();
+    conn.send(JSON.stringify({ type: "state", state: this.state }));
+  }
+
+  @callable()
+  async start() {
+    this.setState({
+      ...this.state,
+      status: "recording",
+      transcript: [],
+      notes: []
+    });
+    this.broadcast(JSON.stringify({ type: "state", state: this.state }));
+    this.simulate();
+    return { ok: true };
+  }
+
+  @callable()
+  async stop() {
+    this.setState({ ...this.state, status: "ended" });
+    this.broadcast(JSON.stringify({ type: "state", state: this.state }));
+    return { ok: true };
+  }
+
+  private async simulate() {
+    for (let i = 0; i < FIXTURE_TRANSCRIPT.length; i++) {
+      if (this.state.status !== "recording") return;
+      await sleep(1400);
+      if ((this.state as MeetingState).status !== "recording") return;
+
+      const line: TranscriptLine = {
+        id: crypto.randomUUID(),
+        ts: Date.now(),
+        ...FIXTURE_TRANSCRIPT[i]
+      };
+      this.setState({
+        ...this.state,
+        transcript: [...this.state.transcript, line]
+      });
+      this.broadcast(JSON.stringify({ type: "transcript", line }));
+
+      if (i % 2 === 1 && FIXTURE_NOTES[(i - 1) / 2]) {
+        const note: NoteItem = {
+          id: crypto.randomUUID(),
+          ts: Date.now(),
+          ...FIXTURE_NOTES[(i - 1) / 2]
+        };
+        this.setState({
+          ...this.state,
+          notes: [...this.state.notes, note]
+        });
+        this.broadcast(JSON.stringify({ type: "note", note }));
       }
-    });
-  }
-
-  @callable()
-  async addServer(name: string, url: string) {
-    return await this.addMcpServer(name, url);
-  }
-
-  @callable()
-  async removeServer(serverId: string) {
-    await this.removeMcpServer(serverId);
-  }
-
-  async onChatMessage(_onFinish: unknown, options?: OnChatMessageOptions) {
-    const mcpTools = this.mcp.getAITools();
-    const workersai = createWorkersAI({ binding: this.env.AI });
-
-    const result = streamText({
-      model: workersai("@cf/moonshotai/kimi-k2.6", {
-        sessionAffinity: this.sessionAffinity
-      }),
-      system: `You are a helpful assistant that can understand images. You can check the weather, get the user's timezone, run calculations, and schedule tasks. When users share images, describe what you see and answer questions about them.
-
-${getSchedulePrompt({ date: new Date() })}
-
-If the user asks to schedule a task, use the schedule tool to schedule the task.`,
-      // Prune old tool calls to save tokens on long conversations
-      messages: pruneMessages({
-        messages: await convertToModelMessages(this.messages),
-        toolCalls: "before-last-2-messages"
-      }),
-      tools: {
-        // MCP tools from connected servers
-        ...mcpTools,
-
-        // Server-side tool: runs automatically on the server
-        getWeather: tool({
-          description: "Get the current weather for a city",
-          inputSchema: z.object({
-            city: z.string().describe("City name")
-          }),
-          execute: async ({ city }) => {
-            // Replace with a real weather API in production
-            const conditions = ["sunny", "cloudy", "rainy", "snowy"];
-            const temp = Math.floor(Math.random() * 30) + 5;
-            return {
-              city,
-              temperature: temp,
-              condition:
-                conditions[Math.floor(Math.random() * conditions.length)],
-              unit: "celsius"
-            };
-          }
-        }),
-
-        // Client-side tool: no execute function — the browser handles it
-        getUserTimezone: tool({
-          description:
-            "Get the user's timezone from their browser. Use this when you need to know the user's local time.",
-          inputSchema: z.object({})
-        }),
-
-        // Approval tool: requires user confirmation before executing
-        calculate: tool({
-          description:
-            "Perform a math calculation with two numbers. Requires user approval for large numbers.",
-          inputSchema: z.object({
-            a: z.number().describe("First number"),
-            b: z.number().describe("Second number"),
-            operator: z
-              .enum(["+", "-", "*", "/", "%"])
-              .describe("Arithmetic operator")
-          }),
-          needsApproval: async ({ a, b }) =>
-            Math.abs(a) > 1000 || Math.abs(b) > 1000,
-          execute: async ({ a, b, operator }) => {
-            const ops: Record<string, (x: number, y: number) => number> = {
-              "+": (x, y) => x + y,
-              "-": (x, y) => x - y,
-              "*": (x, y) => x * y,
-              "/": (x, y) => x / y,
-              "%": (x, y) => x % y
-            };
-            if (operator === "/" && b === 0) {
-              return { error: "Division by zero" };
-            }
-            return {
-              expression: `${a} ${operator} ${b}`,
-              result: ops[operator](a, b)
-            };
-          }
-        }),
-
-        scheduleTask: tool({
-          description:
-            "Schedule a task to be executed at a later time. Use this when the user asks to be reminded or wants something done later.",
-          inputSchema: scheduleSchema,
-          execute: async ({ when, description }) => {
-            if (when.type === "no-schedule") {
-              return "Not a valid schedule input";
-            }
-            const input =
-              when.type === "scheduled"
-                ? when.date
-                : when.type === "delayed"
-                  ? when.delayInSeconds
-                  : when.type === "cron"
-                    ? when.cron
-                    : null;
-            if (!input) return "Invalid schedule type";
-            try {
-              this.schedule(input, "executeTask", description, {
-                idempotent: true
-              });
-              return `Task scheduled: "${description}" (${when.type}: ${input})`;
-            } catch (error) {
-              return `Error scheduling task: ${error}`;
-            }
-          }
-        }),
-
-        getScheduledTasks: tool({
-          description: "List all tasks that have been scheduled",
-          inputSchema: z.object({}),
-          execute: async () => {
-            const tasks = this.getSchedules();
-            return tasks.length > 0 ? tasks : "No scheduled tasks found.";
-          }
-        }),
-
-        cancelScheduledTask: tool({
-          description: "Cancel a scheduled task by its ID",
-          inputSchema: z.object({
-            taskId: z.string().describe("The ID of the task to cancel")
-          }),
-          execute: async ({ taskId }) => {
-            try {
-              this.cancelSchedule(taskId);
-              return `Task ${taskId} cancelled.`;
-            } catch (error) {
-              return `Error cancelling task: ${error}`;
-            }
-          }
-        })
-      },
-      stopWhen: stepCountIs(5),
-      abortSignal: options?.abortSignal
-    });
-
-    return result.toUIMessageStreamResponse();
-  }
-
-  async executeTask(description: string, _task: Schedule<string>) {
-    // Do the actual work here (send email, call API, etc.)
-    console.log(`Executing scheduled task: ${description}`);
-
-    // Notify connected clients via a broadcast event.
-    // We use broadcast() instead of saveMessages() to avoid injecting
-    // into chat history — that would cause the AI to see the notification
-    // as new context and potentially loop.
-    this.broadcast(
-      JSON.stringify({
-        type: "scheduled-task",
-        description,
-        timestamp: new Date().toISOString()
-      })
-    );
+    }
+    if (this.state.status === "recording") {
+      this.setState({ ...this.state, status: "ended" });
+      this.broadcast(JSON.stringify({ type: "state", state: this.state }));
+    }
   }
 }
 
