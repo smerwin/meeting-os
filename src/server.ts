@@ -62,6 +62,74 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+interface SearchResult {
+  title: string;
+  url: string;
+  description: string;
+}
+
+async function braveSearch(env: Env, query: string): Promise<SearchResult[]> {
+  const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}`;
+  const res = await fetch(url, {
+    headers: {
+      Accept: "application/json",
+      "X-Subscription-Token": env.BRAVE_API_KEY
+    }
+  });
+  if (!res.ok) {
+    throw new Error(`Brave search failed: ${res.status} ${await res.text()}`);
+  }
+  const data = (await res.json()) as {
+    web?: { results?: { title: string; url: string; description: string }[] };
+  };
+  return (data.web?.results ?? []).slice(0, 6).map((r) => ({
+    title: r.title,
+    url: r.url,
+    description: r.description
+  }));
+}
+
+async function synthesizePerson(
+  env: Env,
+  person: PersonInfo,
+  results: SearchResult[]
+): Promise<{ bio: string; links: { label: string; url: string }[] }> {
+  const context = results
+    .map((r, i) => `[${i + 1}] ${r.title}\n${r.url}\n${r.description}`)
+    .join("\n\n");
+
+  const prompt = `You are prepping an interviewer with background on a candidate before a meeting.
+
+Candidate: ${person.name}${person.role ? `, ${person.role}` : ""}${person.company ? ` at ${person.company}` : ""}
+
+Search results:
+${context}
+
+Write a short professional background summary (2-4 sentences, factual, no speculation — only use what's in the search results). Then list up to 4 relevant links (LinkedIn, GitHub, company site, articles) from the results above that are clearly about this specific person.
+
+Respond with ONLY valid JSON, no markdown fences, in this exact shape:
+{"bio": "...", "links": [{"label": "...", "url": "..."}]}`;
+
+  const result = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.2,
+    max_tokens: 400
+  });
+
+  const raw = (result as { response?: string }).response ?? "";
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error(`No JSON in model response: ${raw.slice(0, 200)}`);
+
+  const parsed = JSON.parse(match[0]) as {
+    bio?: string;
+    links?: { label: string; url: string }[];
+  };
+  return {
+    bio: parsed.bio ?? "",
+    links: Array.isArray(parsed.links) ? parsed.links : []
+  };
+}
+
 export class MeetingAgent extends Agent<Env, MeetingState> {
   initialState: MeetingState = {
     status: "setup",
@@ -91,7 +159,28 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
       notes: []
     });
     this.broadcast(JSON.stringify({ type: "state", state: this.state }));
+    void this.enrich(person.name);
     return { ok: true };
+  }
+
+  private async enrich(forName: string) {
+    const person = this.state.person;
+    if (person.name !== forName || !person.name) return;
+
+    try {
+      const query = [person.name, person.company].filter(Boolean).join(" ");
+      const results = await braveSearch(this.env, query);
+      if (results.length === 0) return;
+
+      const { bio, links } = await synthesizePerson(this.env, person, results);
+
+      // person may have changed (reset / new meeting) while we were fetching
+      if (this.state.person.name !== forName) return;
+      this.setState({ ...this.state, person: { ...this.state.person, bio, links } });
+      this.broadcast(JSON.stringify({ type: "state", state: this.state }));
+    } catch (err) {
+      console.error("enrichment failed:", err);
+    }
   }
 
   @callable()
