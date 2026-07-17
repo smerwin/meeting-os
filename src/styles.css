@@ -55,10 +55,9 @@ body {
   font-weight: 600;
 }
 
-.record-controls {
+.topbar-actions {
   display: flex;
   gap: 4px;
-  margin-right: 16px;
 }
 
 .sep {

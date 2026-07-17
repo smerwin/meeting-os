@@ -6,6 +6,7 @@ export interface TopBarSession {
   onStart: () => void;
   onStop: () => void;
   onNewMeeting: () => void;
+  onEdit: () => void;
 }
 
 export function TopBar({
@@ -24,9 +25,12 @@ export function TopBar({
           <span className="session">{session.personName}</span>
         </>
       )}
+      <span className={`conn ${connected ? "on" : "off"}`}>
+        {connected ? "● connected" : "○ disconnected"}
+      </span>
       <div className="spacer" />
       {session && (
-        <div className="record-controls">
+        <div className="topbar-actions">
           <button
             className="btn btn-sm"
             disabled={!connected || session.status === "recording"}
@@ -41,15 +45,13 @@ export function TopBar({
           >
             ■ stop
           </button>
+          <button className="btn btn-sm" onClick={session.onEdit}>
+            ✎ edit
+          </button>
+          <button className="btn btn-sm" onClick={session.onNewMeeting}>
+            ↺ new meeting
+          </button>
         </div>
-      )}
-      <span className={`conn ${connected ? "on" : "off"}`}>
-        {connected ? "● connected" : "○ disconnected"}
-      </span>
-      {session && (
-        <button className="btn btn-sm" onClick={session.onNewMeeting}>
-          ↺ new meeting
-        </button>
       )}
     </header>
   );

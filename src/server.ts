@@ -306,13 +306,12 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
     conn.send(JSON.stringify({ type: "state", state: this.state }));
   }
 
-  @callable()
-  async loadPerson(input: {
+  private buildPersonAndCompany(input: {
     name: string;
     company: string;
     role: string;
     email: string;
-  }) {
+  }): { person: PersonInfo; company: CompanyInfo } {
     const person: PersonInfo = {
       name: input.name.trim(),
       role: input.role.trim(),
@@ -323,6 +322,17 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
       links: []
     };
     const company: CompanyInfo = { ...EMPTY_COMPANY, name: person.company };
+    return { person, company };
+  }
+
+  @callable()
+  async loadPerson(input: {
+    name: string;
+    company: string;
+    role: string;
+    email: string;
+  }) {
+    const { person, company } = this.buildPersonAndCompany(input);
     this.setState({
       status: "idle",
       person,
@@ -330,6 +340,24 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
       transcript: [],
       notes: []
     });
+    this.broadcast(JSON.stringify({ type: "state", state: this.state }));
+    void this.enrich(person.name);
+    if (company.name) void this.enrichCompany(company.name);
+    return { ok: true };
+  }
+
+  // Corrects the currently loaded person/company (e.g. wrong company name)
+  // without resetting the meeting in progress — transcript/notes/status are
+  // left alone, unlike loadPerson which starts a fresh meeting.
+  @callable()
+  async editPerson(input: {
+    name: string;
+    company: string;
+    role: string;
+    email: string;
+  }) {
+    const { person, company } = this.buildPersonAndCompany(input);
+    this.setState({ ...this.state, person, company });
     this.broadcast(JSON.stringify({ type: "state", state: this.state }));
     void this.enrich(person.name);
     if (company.name) void this.enrichCompany(company.name);

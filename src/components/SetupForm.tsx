@@ -10,16 +10,22 @@ export interface SetupFormInput {
 export function SetupForm({
   onLoad,
   onClose,
-  connected
+  connected,
+  initial,
+  title = "load meeting",
+  submitLabel = "▶ load"
 }: {
   onLoad: (input: SetupFormInput) => void;
   onClose?: () => void;
   connected: boolean;
+  initial?: SetupFormInput;
+  title?: string;
+  submitLabel?: string;
 }) {
-  const [name, setName] = useState("");
-  const [company, setCompany] = useState("");
-  const [role, setRole] = useState("");
-  const [email, setEmail] = useState("");
+  const [name, setName] = useState(initial?.name ?? "");
+  const [company, setCompany] = useState(initial?.company ?? "");
+  const [role, setRole] = useState(initial?.role ?? "");
+  const [email, setEmail] = useState(initial?.email ?? "");
 
   return (
     <div className="setup">
@@ -32,7 +38,7 @@ export function SetupForm({
         }}
       >
         <div className="setup-form-head">
-          <div className="setup-title">load meeting</div>
+          <div className="setup-title">{title}</div>
           {onClose && (
             <button
               type="button"
@@ -73,7 +79,7 @@ export function SetupForm({
           type="submit"
           disabled={!connected || !name.trim()}
         >
-          ▶ load
+          {submitLabel}
         </button>
       </form>
     </div>

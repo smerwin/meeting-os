@@ -25,7 +25,7 @@ export default function App() {
   const [state, setState] = useState<MeetingState>(EMPTY_STATE);
   const [connected, setConnected] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
-  const [creatingNew, setCreatingNew] = useState(false);
+  const [overlay, setOverlay] = useState<"new" | "edit" | null>(null);
   const streamsRef = useRef<MediaStream[]>([]);
   const capturesRef = useRef<PcmCapture[]>([]);
 
@@ -89,7 +89,12 @@ export default function App() {
   const handleLoad = (input: SetupFormInput) => {
     stopCapture();
     agent.stub.loadPerson(input);
-    setCreatingNew(false);
+    setOverlay(null);
+  };
+
+  const handleEdit = (input: SetupFormInput) => {
+    agent.stub.editPerson(input);
+    setOverlay(null);
   };
 
   const handleStart = async () => {
@@ -127,7 +132,8 @@ export default function App() {
           status: state.status,
           onStart: handleStart,
           onStop: handleStop,
-          onNewMeeting: () => setCreatingNew(true)
+          onNewMeeting: () => setOverlay("new"),
+          onEdit: () => setOverlay("edit")
         }}
       />
 
@@ -135,12 +141,30 @@ export default function App() {
         <div className="capture-error-banner">{captureError}</div>
       )}
 
-      {creatingNew && (
+      {overlay === "new" && (
         <div className="overlay">
           <SetupForm
             onLoad={handleLoad}
-            onClose={() => setCreatingNew(false)}
+            onClose={() => setOverlay(null)}
             connected={connected}
+          />
+        </div>
+      )}
+
+      {overlay === "edit" && (
+        <div className="overlay">
+          <SetupForm
+            onLoad={handleEdit}
+            onClose={() => setOverlay(null)}
+            connected={connected}
+            initial={{
+              name: state.person.name,
+              company: state.person.company,
+              role: state.person.role,
+              email: state.person.email
+            }}
+            title="edit meeting"
+            submitLabel="✓ save"
           />
         </div>
       )}
