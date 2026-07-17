@@ -18,9 +18,24 @@ const EMPTY_STATE: MeetingState = {
     facts: [],
     links: []
   },
+  company: { name: "", summary: "", culture: [], links: [] },
   transcript: [],
   notes: []
 };
+
+// A DO's persisted state can predate fields added later (a running session's
+// stored `person`/`company` may lack keys this client now expects). Merge
+// whatever the server sends over these defaults so the rest of the app can
+// assume the full shape.
+function normalizeState(partial: Partial<MeetingState>): MeetingState {
+  return {
+    status: partial.status ?? EMPTY_STATE.status,
+    person: { ...EMPTY_STATE.person, ...partial.person },
+    company: { ...EMPTY_STATE.company, ...partial.company },
+    transcript: partial.transcript ?? [],
+    notes: partial.notes ?? []
+  };
+}
 
 function fmtTime(ts: number) {
   const d = new Date(ts);
@@ -237,7 +252,7 @@ export default function App() {
       try {
         const msg = JSON.parse(String(event.data));
         if (msg.type === "state") {
-          setState(msg.state as MeetingState);
+          setState(normalizeState(msg.state as Partial<MeetingState>));
         } else if (msg.type === "transcript") {
           const line = msg.line as TranscriptLine;
           setState((s) => ({ ...s, transcript: [...s.transcript, line] }));
@@ -434,54 +449,106 @@ export default function App() {
           </section>
         </main>
 
-        <aside className="panel person-panel">
-          <div className="panel-head panel-head-row">
-            <span>participant</span>
-            <button
-              className="panel-action"
-              disabled={!connected || !state.person.name}
-              onClick={() => agent.stub.refreshEnrichment()}
-              aria-label="Refresh enrichment"
-            >
-              ↻ refresh
-            </button>
-          </div>
-          <div className="panel-body">
-            <div className="person-name">{state.person.name || "—"}</div>
-            <div className="person-role">{state.person.role}</div>
-            <div className="person-company">{state.person.company}</div>
-            <div className="hr" />
-            <div className="person-bio">
-              {state.person.bio || "-- no enrichment data yet --"}
+        <aside className="side-col">
+          <div className="panel person-panel">
+            <div className="panel-head panel-head-row">
+              <span>participant</span>
+              <button
+                className="panel-action"
+                disabled={!connected || !state.person.name}
+                onClick={() => agent.stub.refreshEnrichment()}
+                aria-label="Refresh enrichment"
+              >
+                ↻ refresh
+              </button>
             </div>
-            {(state.person.facts ?? []).length > 0 && (
-              <>
-                <div className="hr" />
-                <ul className="facts">
-                  {state.person.facts.map((fact) => (
-                    <li key={fact}>{fact}</li>
-                  ))}
-                </ul>
-              </>
-            )}
-            {state.person.links.length > 0 && (
-              <>
-                <div className="hr" />
-                <div className="links">
-                  {state.person.links.map((l) => (
-                    <a
-                      key={l.url}
-                      href={l.url}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {l.label} ↗
-                    </a>
-                  ))}
-                </div>
-              </>
-            )}
+            <div className="panel-body scroll">
+              <div className="person-name">{state.person.name || "—"}</div>
+              <div className="person-role">{state.person.role}</div>
+              <div className="person-company">{state.person.company}</div>
+              <div className="hr" />
+              <div className="person-bio">
+                {state.person.bio || "-- no enrichment data yet --"}
+              </div>
+              {state.person.facts.length > 0 && (
+                <>
+                  <div className="hr" />
+                  <ul className="facts">
+                    {state.person.facts.map((fact) => (
+                      <li key={fact}>{fact}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {state.person.links.length > 0 && (
+                <>
+                  <div className="hr" />
+                  <div className="links">
+                    {state.person.links.map((l) => (
+                      <a
+                        key={l.url}
+                        href={l.url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {l.label} ↗
+                      </a>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
+
+          {state.company.name && (
+            <div className="panel company-panel">
+              <div className="panel-head panel-head-row">
+                <span>company</span>
+                <button
+                  className="panel-action"
+                  disabled={!connected}
+                  onClick={() => agent.stub.refreshCompanyEnrichment()}
+                  aria-label="Refresh company enrichment"
+                >
+                  ↻ refresh
+                </button>
+              </div>
+              <div className="panel-body scroll">
+                <div className="person-name">{state.company.name}</div>
+                <div className="hr" />
+                <div className="person-bio">
+                  {state.company.summary || "-- no enrichment data yet --"}
+                </div>
+                {state.company.culture.length > 0 && (
+                  <>
+                    <div className="hr" />
+                    <ul className="facts">
+                      {state.company.culture.map((point) => (
+                        <li key={point}>{point}</li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+                {state.company.links.length > 0 && (
+                  <>
+                    <div className="hr" />
+                    <div className="links">
+                      {state.company.links.map((l) => (
+                        <a
+                          key={l.url}
+                          href={l.url}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {l.label} ↗
+                        </a>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
         </aside>
       </div>
     </div>

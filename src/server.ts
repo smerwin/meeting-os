@@ -31,9 +31,17 @@ export interface PersonInfo {
   links: { label: string; url: string }[];
 }
 
+export interface CompanyInfo {
+  name: string;
+  summary: string;
+  culture: string[];
+  links: { label: string; url: string }[];
+}
+
 export interface MeetingState {
   status: "setup" | "idle" | "recording" | "ended";
   person: PersonInfo;
+  company: CompanyInfo;
   transcript: TranscriptLine[];
   notes: NoteItem[];
 }
@@ -45,6 +53,13 @@ const EMPTY_PERSON: PersonInfo = {
   email: "",
   bio: "",
   facts: [],
+  links: []
+};
+
+const EMPTY_COMPANY: CompanyInfo = {
+  name: "",
+  summary: "",
+  culture: [],
   links: []
 };
 
@@ -75,24 +90,15 @@ async function braveSearch(env: Env, query: string): Promise<SearchResult[]> {
   }));
 }
 
-// One generic query misses a lot — LinkedIn/GitHub/news rarely surface high
-// enough in a plain "name company" search. Run several targeted queries in
-// parallel and merge, so a thin generic result set doesn't sink the whole
-// enrichment (Promise.allSettled — one bad/rate-limited query shouldn't
-// cost us the others).
-async function braveSearchMulti(
+// One generic query misses a lot — LinkedIn/GitHub/Glassdoor rarely surface
+// high enough in a plain search. Run several targeted queries in parallel and
+// merge/dedupe by URL, so a thin generic result set doesn't sink the whole
+// enrichment (Promise.allSettled — one bad/rate-limited query shouldn't cost
+// us the others).
+async function braveSearchMerged(
   env: Env,
-  name: string,
-  company: string
+  queries: string[]
 ): Promise<SearchResult[]> {
-  const base = [name, company].filter(Boolean).join(" ");
-  const queries = [
-    base,
-    `${name} linkedin`,
-    `${name} github`,
-    `${name} news OR interview OR podcast`
-  ];
-
   const settled = await Promise.allSettled(
     queries.map((q) => braveSearch(env, q))
   );
@@ -110,6 +116,25 @@ async function braveSearchMulti(
   return merged.slice(0, 16);
 }
 
+function personQueries(name: string, company: string): string[] {
+  const base = [name, company].filter(Boolean).join(" ");
+  return [
+    base,
+    `${name} linkedin`,
+    `${name} github`,
+    `${name} news OR interview OR podcast`
+  ];
+}
+
+function companyQueries(company: string): string[] {
+  return [
+    `${company}`,
+    `${company} glassdoor reviews`,
+    `${company} culture`,
+    `${company} news`
+  ];
+}
+
 // Workers AI text-gen models don't have a consistent output shape across
 // variants: some return `response` as a plain string, the "-fast" variant
 // returns `response` already parsed into an object when it looks like JSON,
@@ -124,6 +149,19 @@ function extractModelText(result: unknown): string {
   if (typeof r.response === "string") return r.response;
   const content = r.choices?.[0]?.message?.content;
   return typeof content === "string" ? content : "";
+}
+
+// The model sometimes repeats the same URL under different labels — dedupe
+// so the client never has to render two links with the same React key.
+function dedupeLinks(
+  links: { label: string; url: string }[]
+): { label: string; url: string }[] {
+  const seen = new Set<string>();
+  return links.filter((l) => {
+    if (seen.has(l.url)) return false;
+    seen.add(l.url);
+    return true;
+  });
 }
 
 async function synthesizePerson(
@@ -182,7 +220,66 @@ Respond with ONLY valid JSON, no markdown fences, in this exact shape:
   return {
     bio: parsed.bio ?? "",
     facts: Array.isArray(parsed.facts) ? parsed.facts : [],
-    links: Array.isArray(parsed.links) ? parsed.links : []
+    links: dedupeLinks(Array.isArray(parsed.links) ? parsed.links : [])
+  };
+}
+
+async function synthesizeCompany(
+  env: Env,
+  company: string,
+  results: SearchResult[]
+): Promise<{
+  summary: string;
+  culture: string[];
+  links: { label: string; url: string }[];
+}> {
+  const context = results
+    .map((r, i) => `[${i + 1}] ${r.title}\n${r.url}\n${r.description}`)
+    .join("\n\n");
+
+  const prompt = `You are prepping someone with background on a company before a meeting with one of its people.
+
+Company: ${company}
+
+Search results (from multiple queries — general/about, Glassdoor reviews, culture, news):
+${context}
+
+Write a short factual summary of the company (2-4 sentences: what they do, size/stage if known, notable recent developments). No speculation — only use what's in the search results.
+
+Then list up to 5 short "culture" points — specific, sourced observations about what it's like to work there or engage with them. Prioritize anything from Glassdoor-style reviews or employee sentiment (e.g. "reviewers frequently mention long hours", "praised for strong mentorship") over generic marketing copy. If the results don't contain real sentiment/review data, say so explicitly in one of the points rather than inventing filler.
+
+Then list up to 5 relevant links (Glassdoor page, official site, news articles) from the results above.
+
+Respond with ONLY valid JSON, no markdown fences, in this exact shape:
+{"summary": "...", "culture": ["...", "..."], "links": [{"label": "...", "url": "..."}]}`;
+
+  const result = await env.AI.run("@cf/meta/llama-3.1-8b-instruct-fast", {
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.2,
+    max_tokens: 700
+  });
+
+  const response = (result as AiTextResult).response;
+
+  let parsed: {
+    summary?: string;
+    culture?: string[];
+    links?: { label: string; url: string }[];
+  };
+  if (response && typeof response === "object") {
+    parsed = response as typeof parsed;
+  } else {
+    const raw = extractModelText(result);
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match)
+      throw new Error(`No JSON in model response: ${raw.slice(0, 200)}`);
+    parsed = JSON.parse(match[0]);
+  }
+
+  return {
+    summary: parsed.summary ?? "",
+    culture: Array.isArray(parsed.culture) ? parsed.culture : [],
+    links: dedupeLinks(Array.isArray(parsed.links) ? parsed.links : [])
   };
 }
 
@@ -190,6 +287,7 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
   initialState: MeetingState = {
     status: "setup",
     person: EMPTY_PERSON,
+    company: EMPTY_COMPANY,
     transcript: [],
     notes: []
   };
@@ -214,14 +312,17 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
       facts: [],
       links: []
     };
+    const company: CompanyInfo = { ...EMPTY_COMPANY, name: person.company };
     this.setState({
       status: "idle",
       person,
+      company,
       transcript: [],
       notes: []
     });
     this.broadcast(JSON.stringify({ type: "state", state: this.state }));
     void this.enrich(person.name);
+    if (company.name) void this.enrichCompany(company.name);
     return { ok: true };
   }
 
@@ -233,15 +334,22 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
     return { ok: true };
   }
 
+  @callable()
+  async refreshCompanyEnrichment() {
+    const name = this.state.company.name;
+    if (!name) return { ok: false };
+    void this.enrichCompany(name);
+    return { ok: true };
+  }
+
   private async enrich(forName: string) {
     const person = this.state.person;
     if (person.name !== forName || !person.name) return;
 
     try {
-      const results = await braveSearchMulti(
+      const results = await braveSearchMerged(
         this.env,
-        person.name,
-        person.company
+        personQueries(person.name, person.company)
       );
       if (results.length === 0) return;
 
@@ -260,6 +368,35 @@ export class MeetingAgent extends Agent<Env, MeetingState> {
       this.broadcast(JSON.stringify({ type: "state", state: this.state }));
     } catch (err) {
       console.error("enrichment failed:", err);
+    }
+  }
+
+  private async enrichCompany(forCompanyName: string) {
+    const company = this.state.company;
+    if (company.name !== forCompanyName || !company.name) return;
+
+    try {
+      const results = await braveSearchMerged(
+        this.env,
+        companyQueries(company.name)
+      );
+      if (results.length === 0) return;
+
+      const { summary, culture, links } = await synthesizeCompany(
+        this.env,
+        company.name,
+        results
+      );
+
+      // company may have changed (reset / new meeting) while we were fetching
+      if (this.state.company.name !== forCompanyName) return;
+      this.setState({
+        ...this.state,
+        company: { ...this.state.company, summary, culture, links }
+      });
+      this.broadcast(JSON.stringify({ type: "state", state: this.state }));
+    } catch (err) {
+      console.error("company enrichment failed:", err);
     }
   }
 

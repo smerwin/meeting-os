@@ -335,6 +335,22 @@ body {
   border-radius: 6px;
 }
 
+.side-col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.person-panel,
+.company-panel {
+  flex: 1;
+  min-height: 0;
+}
+
+.company-panel {
+  border-top: 1px solid var(--line);
+}
+
 .line {
   margin-bottom: 6px;
 }
