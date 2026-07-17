@@ -16,7 +16,7 @@ function fmtTime(ts: number) {
 
 function StatusDot({ status }: { status: MeetingState["status"] }) {
   const color =
-    status === "recording" ? "#ff5f56" : status === "ended" ? "#8a8a8a" : "#3a3a3a";
+    status === "recording" ? "#dc322f" : status === "ended" ? "#93a1a1" : "#657b83";
   return <span className="dot" style={{ background: color }} />;
 }
 

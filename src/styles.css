@@ -7,14 +7,16 @@ body,
 }
 
 :root {
-  --bg: #0a0a0a;
-  --panel: #111111;
-  --line: #262626;
-  --text: #d4d4d4;
-  --dim: #6b6b6b;
-  --accent: #5fd75f;
-  --accent-dim: #2f6b2f;
-  --danger: #ff5f56;
+  /* Solarized Light */
+  --bg: #fdf6e3;
+  --panel: #eee8d5;
+  --line: rgba(147, 161, 161, 0.4);
+  --text: #657b83;
+  --dim: #93a1a1;
+  --accent: #859900;
+  --accent-dim: #6b7a00;
+  --danger: #dc322f;
+  --blue: #268bd2;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
 }
 
@@ -26,7 +28,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: 11.5px;
   line-height: 1.5;
 }
 
@@ -139,7 +141,7 @@ body {
   flex: 1;
   border: 1px solid var(--line);
   border-radius: 4px;
-  background: #000;
+  background: #002b36;
   position: relative;
   display: flex;
   align-items: center;
@@ -155,7 +157,7 @@ body {
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: var(--dim);
+  color: #93a1a1;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
@@ -168,7 +170,7 @@ body {
 }
 
 .call-placeholder {
-  color: var(--dim);
+  color: #586e75;
   font-size: 12px;
 }
 
@@ -219,7 +221,7 @@ body {
 }
 
 .speaker.you {
-  color: #5f9fd7;
+  color: var(--blue);
 }
 
 .speaker.them {
@@ -266,7 +268,7 @@ body {
 }
 
 .links a {
-  color: #5f9fd7;
+  color: var(--blue);
   text-decoration: none;
 }
 
