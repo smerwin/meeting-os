@@ -468,6 +468,18 @@ export class MeetingIndex extends Agent<Env> {
     `;
     return { ok: true };
   }
+
+  @callable()
+  async remove(id: string) {
+    this.sql`DELETE FROM meetings WHERE id = ${id}`;
+    try {
+      const meeting = await getAgentByName(this.env.MeetingAgent, id);
+      await meeting.destroy();
+    } catch (err) {
+      console.error("meeting destroy failed:", err);
+    }
+    return { ok: true };
+  }
 }
 
 export class MeetingAgent extends Agent<Env, MeetingState> {

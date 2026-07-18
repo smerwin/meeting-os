@@ -300,12 +300,23 @@ body {
 }
 
 .meeting-row {
+  display: flex;
+  align-items: center;
+  background: var(--bg);
+}
+
+.meeting-row:hover {
+  background: var(--panel);
+}
+
+.meeting-row-link {
+  flex: 1;
   display: grid;
   grid-template-columns: 1fr 1fr auto auto;
   gap: 12px;
   align-items: center;
   padding: 10px 14px;
-  background: var(--bg);
+  background: none;
   border: none;
   color: var(--text);
   font-family: var(--mono);
@@ -314,8 +325,18 @@ body {
   cursor: pointer;
 }
 
-.meeting-row:hover {
-  background: var(--panel);
+.meeting-row-delete {
+  background: none;
+  border: none;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+
+.meeting-row-delete:hover {
+  color: var(--danger);
 }
 
 .meeting-row-name {

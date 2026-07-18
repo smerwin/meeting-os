@@ -3,6 +3,7 @@ import { useAgent } from "agents/react";
 import type { MeetingIndex, MeetingSummary } from "../server";
 import { navigate, newMeetingId } from "../lib/router";
 import { TopBar } from "./TopBar";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 function fmtDate(ts: number) {
   return new Date(ts).toLocaleString([], {
@@ -16,6 +17,9 @@ function fmtDate(ts: number) {
 export function Landing() {
   const [connected, setConnected] = useState(false);
   const [meetings, setMeetings] = useState<MeetingSummary[]>([]);
+  const [pendingDelete, setPendingDelete] = useState<MeetingSummary | null>(
+    null
+  );
 
   const agent = useAgent<MeetingIndex>({
     agent: "MeetingIndex",
@@ -30,6 +34,14 @@ export function Landing() {
   }, [connected, agent]);
 
   const handleNew = () => navigate(`/m/${newMeetingId()}`);
+
+  const handleDelete = async () => {
+    if (!pendingDelete) return;
+    const id = pendingDelete.id;
+    setPendingDelete(null);
+    setMeetings((prev) => prev.filter((m) => m.id !== id));
+    await agent.stub.remove(id);
+  };
 
   return (
     <div className="shell">
@@ -48,21 +60,41 @@ export function Landing() {
 
         <div className="meeting-list">
           {meetings.map((m) => (
-            <button
-              key={m.id}
-              className="meeting-row"
-              onClick={() => navigate(`/m/${m.id}`)}
-            >
-              <span className="meeting-row-name">
-                {m.personName || "(untitled)"}
-              </span>
-              <span className="meeting-row-company">{m.company}</span>
-              <span className="meeting-row-status">{m.status}</span>
-              <span className="meeting-row-date">{fmtDate(m.updatedAt)}</span>
-            </button>
+            <div key={m.id} className="meeting-row">
+              <button
+                type="button"
+                className="meeting-row-link"
+                onClick={() => navigate(`/m/${m.id}`)}
+              >
+                <span className="meeting-row-name">
+                  {m.personName || "(untitled)"}
+                </span>
+                <span className="meeting-row-company">{m.company}</span>
+                <span className="meeting-row-status">{m.status}</span>
+                <span className="meeting-row-date">{fmtDate(m.updatedAt)}</span>
+              </button>
+              <button
+                type="button"
+                className="meeting-row-delete"
+                aria-label={`Delete meeting with ${m.personName || "this person"}`}
+                onClick={() => setPendingDelete(m)}
+              >
+                ✕
+              </button>
+            </div>
           ))}
         </div>
       </div>
+
+      {pendingDelete && (
+        <ConfirmDialog
+          title="delete meeting"
+          message={`Delete the meeting with ${pendingDelete.personName || "(untitled)"}${pendingDelete.company ? ` at ${pendingDelete.company}` : ""}? This can't be undone.`}
+          confirmLabel="delete"
+          onConfirm={handleDelete}
+          onCancel={() => setPendingDelete(null)}
+        />
+      )}
     </div>
   );
 }
