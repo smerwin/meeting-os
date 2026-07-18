@@ -75,6 +75,26 @@ src/
   each chunk with Whisper and appends it to the transcript, periodically summarizing
   into notes.
 
+### Security Model
+
+Meeting OS is currently designed for local, single-user usage.
+
+It does not implement:
+
+- Authentication
+- Authorisation
+- Multi-user tenancy
+- Rate limiting
+- Access control
+- Production privacy/compliance controls
+
+If deploying publicly, these concerns must be added separately. The included
+deployment commands are provided for experimentation and development purposes
+only.
+
+See [PRODUCTION.md](./PRODUCTION.md) for what a hosted, multi-user deployment
+would additionally need.
+
 ## Deploy
 
 ```bash
@@ -86,6 +106,9 @@ Set `BRAVE_API_KEY` as a Worker secret before deploying:
 ```bash
 pnpm exec wrangler secret put BRAVE_API_KEY
 ```
+
+Do not expose Meeting OS directly to the public internet without adding
+authentication and access controls.
 
 ## Development
 
