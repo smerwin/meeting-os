@@ -345,6 +345,50 @@ body {
   gap: 10px;
 }
 
+.overlay-backdrop {
+  position: absolute;
+  inset: 0;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: default;
+}
+
+.confirm-dialog {
+  position: relative;
+  width: 340px;
+  max-width: none;
+  height: auto;
+  max-height: none;
+  color: inherit;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.confirm-dialog-title {
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 10px;
+}
+
+.confirm-dialog-message {
+  word-break: break-all;
+  font-size: 12px;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 .setup-form-head {
   display: flex;
   align-items: center;
