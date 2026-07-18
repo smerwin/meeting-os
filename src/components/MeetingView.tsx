@@ -13,7 +13,6 @@ import {
   startPcmCapture,
   type PcmCapture
 } from "../lib/audioCapture";
-import { navigate, newMeetingId } from "../lib/router";
 import { TopBar } from "./TopBar";
 import { SetupForm, type SetupFormInput } from "./SetupForm";
 import { CallFrame } from "./CallFrame";
@@ -147,7 +146,6 @@ export function MeetingView({ meetingId }: { meetingId: string }) {
           status: state.status,
           onStart: handleStart,
           onStop: handleStop,
-          onNewMeeting: () => navigate(`/m/${newMeetingId()}`),
           onEdit: () => setEditing(true)
         }}
       />

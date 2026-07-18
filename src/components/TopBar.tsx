@@ -6,7 +6,6 @@ export interface TopBarSession {
   status: MeetingState["status"];
   onStart: () => void;
   onStop: () => void;
-  onNewMeeting: () => void;
   onEdit: () => void;
 }
 
@@ -50,9 +49,6 @@ export function TopBar({
           </button>
           <button className="btn btn-sm" onClick={session.onEdit}>
             ✎ edit
-          </button>
-          <button className="btn btn-sm" onClick={session.onNewMeeting}>
-            ↺ new meeting
           </button>
         </div>
       )}
