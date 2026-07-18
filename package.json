@@ -27,7 +27,7 @@
   "devDependencies": {
     "@babel/plugin-proposal-decorators": "^8.0.2",
     "@cloudflare/vite-plugin": "^1.44.0",
-    "@cloudflare/workers-types": "^5.20260710.1",
+    "@cloudflare/workers-types": "^5.20260718.1",
     "@rolldown/plugin-babel": "^0.2.3",
     "@types/node": "^26.1.1",
     "@types/react": "^19.2.17",
