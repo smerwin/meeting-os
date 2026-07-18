@@ -20,7 +20,7 @@
     "check": "oxfmt --check . && oxlint src/ && tsc"
   },
   "dependencies": {
-    "agents": "^0.17.3",
+    "agents": "^0.17.4",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
