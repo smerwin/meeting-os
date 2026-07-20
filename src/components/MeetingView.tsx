@@ -67,11 +67,17 @@ export function MeetingView({ meetingId }: { meetingId: string }) {
   const startCapture = useCallback(async () => {
     setCaptureError(null);
 
-    const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // getDisplayMedia needs the click's transient user activation and
+    // consumes it — it must go first. getUserMedia doesn't require a
+    // gesture at all, but calling it first can itself consume the
+    // activation (even when "parallelized" via Promise.all), leaving
+    // getDisplayMedia to reject with "must be called from a user gesture
+    // handler". So: display media first, mic after.
     const tab = await navigator.mediaDevices.getDisplayMedia({
       video: true,
       audio: true
     });
+    const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
     streamsRef.current = [mic, tab];
 
     const tabVideoTrack = tab.getVideoTracks()[0];
