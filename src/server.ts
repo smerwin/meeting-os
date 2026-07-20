@@ -157,7 +157,13 @@ async function braveSearchMerged(
   const seen = new Set<string>();
   const merged: SearchResult[] = [];
   for (const outcome of settled) {
-    if (outcome.status !== "fulfilled") continue;
+    if (outcome.status !== "fulfilled") {
+      // Individual query failures (bad key, rate limit, network) were
+      // previously swallowed here with zero visibility — enrich()/
+      // enrichCompany() only see the merged empty result and return quietly.
+      console.error("brave search query failed:", outcome.reason);
+      continue;
+    }
     for (const item of outcome.value) {
       if (seen.has(item.url)) continue;
       seen.add(item.url);
