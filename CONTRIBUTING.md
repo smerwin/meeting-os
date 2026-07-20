@@ -4,7 +4,7 @@
 
 ```bash
 pnpm install
-cp .env.example .env   # add your own Brave Search API key
+echo "BRAVE_API_KEY=your-brave-search-api-key-here" > .env   # see .env.schema for the full list
 pnpm run types
 pnpm run dev
 ```
