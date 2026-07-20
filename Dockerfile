@@ -35,4 +35,10 @@ EXPOSE 8787
 # .env.schema and injects them into the entrypoint's process env, which
 # writes BRAVE_API_KEY into .dev.vars before starting wrangler dev — see
 # docker-entrypoint.sh for why that step is necessary.
-CMD ["pnpm", "exec", "varlock", "run", "--", "./docker-entrypoint.sh"]
+#
+# ENTRYPOINT (not CMD) wraps this in varlock run, so secrets are still
+# resolved and injected even if CMD is overridden at `docker run` time
+# (e.g. `docker run meeting-os sh` gets a shell with BRAVE_API_KEY/
+# CLOUDFLARE_API_TOKEN already in its env, not a bare unresolved shell).
+ENTRYPOINT ["pnpm", "exec", "varlock", "run", "--"]
+CMD ["./docker-entrypoint.sh"]
