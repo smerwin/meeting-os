@@ -4,7 +4,20 @@
 
 ```bash
 pnpm install
-echo "BRAVE_API_KEY=your-brave-search-api-key-here" > .env   # see .env.schema for the full list
+```
+
+`pnpm run dev` runs through [varlock](https://varlock.dev), which validates env vars against
+`.env.schema` and fails fast if `BRAVE_API_KEY` is missing. Provide it either way:
+
+```bash
+# plaintext, quickest to get started
+echo "BRAVE_API_KEY=your-brave-search-api-key-here" > .env
+
+# macOS: stores the value in Keychain instead, .env only gets a keychain() reference
+npx varlock keychain set BRAVE_API_KEY --write-to .env
+```
+
+```bash
 pnpm run types
 pnpm run dev
 ```
