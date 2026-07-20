@@ -27,10 +27,14 @@ state persisted in Durable Object SQLite.
 
 ```bash
 pnpm install
-cp .env.example .env   # add your own Brave Search API key
+echo "BRAVE_API_KEY=your-brave-search-api-key-here" > .env   # see .env.schema for the full list
 pnpm run types           # generates env.d.ts from wrangler.jsonc bindings
 pnpm run dev
 ```
+
+Env vars are schema-validated by [varlock](https://varlock.dev) (`.env.schema`, committed) — `pnpm run dev`
+runs through `varlock run`, which reads `.env` (gitignored) and fails fast with a clear
+error if a required var is missing.
 
 Open [http://localhost:5173](http://localhost:5173).
 

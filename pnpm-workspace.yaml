@@ -1,0 +1,8 @@
+# Lets `pnpm install` build these packages' native binaries (workerd's
+# Workers runtime, esbuild, sharp) without the interactive "approve builds"
+# prompt, which blocks in non-interactive contexts like Docker builds.
+onlyBuiltDependencies:
+  - core-js-pure
+  - esbuild
+  - sharp
+  - workerd
